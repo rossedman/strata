@@ -1,0 +1,764 @@
+openapi: 3.0.3
+info:
+  title: strata API
+  version: 1.0.0
+  description: |
+    Read-only API over a strata index: what an image is, where it came from,
+    what is built on it and whether it is stale. Every response schema is
+    versioned under /v1; breaking changes get a new prefix.
+  license:
+    name: Apache-2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+servers:
+  - url: http://127.0.0.1:7878
+    description: strata serve on its default local address
+tags:
+  - name: images
+    description: One image and its lineage
+  - name: reports
+    description: Queries and aggregate reports
+  - name: system
+    description: Server health
+paths:
+  /v1/healthz:
+    get:
+      operationId: getHealth
+      summary: Report server health and index size
+      tags: [system]
+      responses:
+        "200":
+          description: The server is up
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+        default:
+          $ref: "#/components/responses/Error"
+  /v1/resolve:
+    get:
+      operationId: resolveRef
+      summary: Resolve a ref to a platform manifest digest
+      tags: [images]
+      parameters:
+        - $ref: "#/components/parameters/Ref"
+        - $ref: "#/components/parameters/Platform"
+      responses:
+        "200":
+          description: The digest the ref names
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Resolved"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+  /v1/images/{digest}:
+    get:
+      operationId: getImage
+      summary: Explain one image
+      description: Labels, config, layers, referrers, lineage with provenance and the staleness verdict with reasons.
+      tags: [images]
+      parameters:
+        - name: digest
+          in: path
+          required: true
+          description: Manifest digest, or a unique digest prefix of at least 12 hex characters
+          schema:
+            type: string
+            pattern: "^sha256:[0-9a-f]{12,64}$"
+        - name: history
+          in: query
+          required: false
+          description: Include the build steps from the config history
+          schema:
+            type: boolean
+            default: false
+      responses:
+        "200":
+          description: The image
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Explanation"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+  /v1/ancestry:
+    get:
+      operationId: getAncestry
+      summary: Walk an image's ancestry to its root base
+      tags: [images]
+      parameters:
+        - $ref: "#/components/parameters/Ref"
+        - $ref: "#/components/parameters/Platform"
+      responses:
+        "200":
+          description: The ancestry chain
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Graph"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+  /v1/descendants:
+    get:
+      operationId: getDescendants
+      summary: Find everything built on a base
+      tags: [images]
+      parameters:
+        - $ref: "#/components/parameters/Ref"
+        - $ref: "#/components/parameters/Platform"
+        - name: depth
+          in: query
+          required: false
+          description: Levels below the base; 0 means the whole subtree
+          schema:
+            type: integer
+            minimum: 0
+            default: 1
+        - name: all_versions
+          in: query
+          required: false
+          description: Match every digest the base tag has held
+          schema:
+            type: boolean
+            default: false
+        - $ref: "#/components/parameters/Budget"
+      responses:
+        "200":
+          description: The descendant graph and base versions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DescendantResult"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+  /v1/query:
+    get:
+      operationId: runQuery
+      summary: Filter images with the query language
+      tags: [reports]
+      parameters:
+        - $ref: "#/components/parameters/Filter"
+        - name: fields
+          in: query
+          required: false
+          description: Columns to return
+          style: form
+          explode: false
+          schema:
+            type: array
+            items:
+              type: string
+        - name: sort
+          in: query
+          required: false
+          description: Fields to sort by; a leading - sorts descending
+          style: form
+          explode: false
+          schema:
+            type: array
+            items:
+              type: string
+        - name: limit
+          in: query
+          required: false
+          description: Maximum rows; 0 means all
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 100000
+            default: 1000
+        - $ref: "#/components/parameters/GroupBy"
+      responses:
+        "200":
+          description: Matching rows
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Table"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        default:
+          $ref: "#/components/responses/Error"
+  /v1/query/graph:
+    get:
+      operationId: getQueryGraph
+      summary: Draw the images a filter matches plus their ancestry
+      tags: [reports]
+      parameters:
+        - $ref: "#/components/parameters/Filter"
+        - $ref: "#/components/parameters/Budget"
+      responses:
+        "200":
+          description: The query graph
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Graph"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        default:
+          $ref: "#/components/responses/Error"
+  /v1/stale:
+    get:
+      operationId: getStale
+      summary: Report the staleness mix
+      tags: [reports]
+      parameters:
+        - $ref: "#/components/parameters/GroupBy"
+      responses:
+        "200":
+          description: Verdict counts per group
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Table"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        default:
+          $ref: "#/components/responses/Error"
+  /v1/roots:
+    get:
+      operationId: getRoots
+      summary: List root bases and their descendant counts
+      tags: [reports]
+      responses:
+        "200":
+          description: Root bases, most-used first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Root"
+        default:
+          $ref: "#/components/responses/Error"
+  /v1/summary:
+    get:
+      operationId: getSummary
+      summary: Footprint summary of the registry
+      tags: [reports]
+      parameters:
+        - $ref: "#/components/parameters/GroupBy"
+      responses:
+        "200":
+          description: Footprint metrics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Summary"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        default:
+          $ref: "#/components/responses/Error"
+components:
+  parameters:
+    Ref:
+      name: ref
+      in: query
+      required: true
+      description: repo:tag, repo@digest, a digest or a digest prefix
+      schema:
+        type: string
+        minLength: 1
+    Platform:
+      name: platform
+      in: query
+      required: false
+      description: Platform to pick when the ref names a multi-platform index, such as linux/arm64
+      schema:
+        type: string
+    Filter:
+      name: filter
+      in: query
+      required: false
+      description: A filter in strata's query language; empty matches every image
+      schema:
+        type: string
+        default: ""
+    GroupBy:
+      name: group_by
+      in: query
+      required: false
+      description: Field to group by, such as repo, root or label.team
+      schema:
+        type: string
+    Budget:
+      name: budget
+      in: query
+      required: false
+      description: Maximum graph nodes
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 20000
+        default: 500
+  responses:
+    Error:
+      description: "Unexpected error"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: "No indexed image matches"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    BadRequest:
+      description: "The request is invalid, such as a filter syntax error"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+  schemas:
+    Error:
+      description: "An error message"
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+    Health:
+      description: "Server status and index size"
+      type: object
+      required: [status, version, images]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+        version:
+          type: string
+        images:
+          type: integer
+          format: int64
+    Resolved:
+      description: "A ref and the platform manifest digest it names"
+      type: object
+      required: [ref, digest]
+      properties:
+        ref:
+          type: string
+        digest:
+          type: string
+    Node:
+      description: "A graph node: an image, an external root, a phantom ancestor not in the registry, or a collapsed group"
+      type: object
+      required: [id, label, kind, depth]
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+        repo:
+          type: string
+        refs:
+          type: array
+          items:
+            type: string
+        kind:
+          type: string
+          enum: [image, external, phantom, collapsed, overflow]
+        verdict:
+          $ref: "#/components/schemas/Verdict"
+        reasons:
+          type: array
+          items:
+            type: string
+        note:
+          type: string
+        created:
+          type: string
+        size:
+          type: integer
+          format: int64
+        layers:
+          type: integer
+        depth:
+          type: integer
+        matched:
+          type: boolean
+        count:
+          type: integer
+        members:
+          type: array
+          items:
+            type: string
+        platform:
+          type: string
+    Edge:
+      description: "A child-to-parent lineage edge with how it was found"
+      type: object
+      required: [parent, child, source]
+      properties:
+        parent:
+          type: string
+        child:
+          type: string
+        source:
+          type: string
+          enum: [layers, attestation, annotation, label]
+        confidence:
+          type: string
+          enum: [exact, declared, inferred]
+        conflict:
+          type: boolean
+    Graph:
+      description: "A lineage graph: an ancestry chain, a descendant tree, a query graph or the registry map"
+      type: object
+      required: [kind, title, nodes, edges]
+      properties:
+        kind:
+          type: string
+          enum: [ancestry, descendants, query, map]
+        root:
+          type: string
+        title:
+          type: string
+        nodes:
+          type: array
+          items:
+            $ref: "#/components/schemas/Node"
+        edges:
+          type: array
+          items:
+            $ref: "#/components/schemas/Edge"
+        hidden:
+          type: integer
+    Verdict:
+      description: "A staleness verdict; empty when not computed yet"
+      type: string
+      enum: ["", fresh, drifting, stale, abandoned]
+    BaseVersion:
+      description: "One digest a base tag has held, and how much is built on it"
+      type: object
+      required: [digest, label, source, confidence, current, children, descendants]
+      properties:
+        digest:
+          type: string
+        label:
+          type: string
+        source:
+          type: string
+          enum: [tag, tag_history, repo, file]
+        confidence:
+          type: string
+          enum: [exact, declared, inferred]
+        current:
+          type: boolean
+        children:
+          type: integer
+        descendants:
+          type: integer
+    DescendantResult:
+      description: "A descendant graph and the base versions it starts from"
+      type: object
+      required: [graph, versions, images]
+      properties:
+        graph:
+          $ref: "#/components/schemas/Graph"
+        versions:
+          type: array
+          items:
+            $ref: "#/components/schemas/BaseVersion"
+        images:
+          type: integer
+    Table:
+      description: "Tabular rows with their column names"
+      type: object
+      required: [columns, rows]
+      properties:
+        columns:
+          type: array
+          items:
+            type: string
+        rows:
+          type: array
+          items:
+            type: array
+            items:
+              description: A cell; null where the image has no value
+              nullable: true
+    Root:
+      description: "A root base and how much descends from it"
+      type: object
+      required: [id, label, kind, children, descendants, stale_pct]
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+        kind:
+          type: string
+        children:
+          type: integer
+        descendants:
+          type: integer
+        stale_pct:
+          type: number
+    GroupMetrics:
+      description: "Footprint metrics for one group of images"
+      type: object
+      required: [group, repos, tags, manifests, unique_stacks, untagged_pct, apparent_bytes, dedup_bytes, exclusive_bytes, shared_cost_bytes, fresh, drifting, stale, abandoned]
+      properties:
+        group:
+          type: string
+        repos:
+          type: integer
+          format: int64
+        tags:
+          type: integer
+          format: int64
+        manifests:
+          type: integer
+          format: int64
+        unique_stacks:
+          type: integer
+          format: int64
+        untagged_pct:
+          type: number
+        apparent_bytes:
+          type: integer
+          format: int64
+        dedup_bytes:
+          type: integer
+          format: int64
+        exclusive_bytes:
+          type: integer
+          format: int64
+        shared_cost_bytes:
+          type: integer
+          format: int64
+        fresh:
+          type: integer
+          format: int64
+        drifting:
+          type: integer
+          format: int64
+        stale:
+          type: integer
+          format: int64
+        abandoned:
+          type: integer
+          format: int64
+    Summary:
+      description: "Footprint summary of the registry, optionally grouped"
+      type: object
+      required: [total, platforms]
+      properties:
+        group_by:
+          type: string
+        total:
+          $ref: "#/components/schemas/GroupMetrics"
+        groups:
+          type: array
+          items:
+            $ref: "#/components/schemas/GroupMetrics"
+        platforms:
+          type: object
+          additionalProperties:
+            type: integer
+            format: int64
+        required_label_coverage:
+          type: object
+          additionalProperties:
+            type: number
+    ImageInfo:
+      description: "What the index knows about one image"
+      type: object
+      required: [digest, repo, label, tags, platform, size, layer_count, top_chain_id, external, labels, config]
+      properties:
+        digest:
+          type: string
+        repo:
+          type: string
+        label:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        index_digest:
+          type: string
+        platform:
+          type: string
+        platforms:
+          type: array
+          items:
+            type: string
+        created:
+          type: string
+          format: date-time
+        age_days:
+          type: integer
+        size:
+          type: integer
+          format: int64
+        layer_count:
+          type: integer
+        top_chain_id:
+          type: string
+        external:
+          type: boolean
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        config:
+          $ref: "#/components/schemas/ConfigInfo"
+    ConfigInfo:
+      description: "Run-time fields from the image config; environment values are never stored except allowlisted ones"
+      type: object
+      required: [user, entrypoint, cmd, ports, env_keys, workdir, stop_signal, healthcheck]
+      properties:
+        user:
+          type: string
+        entrypoint:
+          type: array
+          items:
+            type: string
+        cmd:
+          type: array
+          items:
+            type: string
+        ports:
+          type: array
+          items:
+            type: string
+        env_keys:
+          type: array
+          items:
+            type: string
+        env_values:
+          type: object
+          additionalProperties:
+            type: string
+        workdir:
+          type: string
+        stop_signal:
+          type: string
+        healthcheck:
+          type: boolean
+    LayerInfo:
+      description: "One layer and the build step that created it"
+      type: object
+      required: [position, diff_id, blob_digest, size, created_by, shared_by]
+      properties:
+        position:
+          type: integer
+        diff_id:
+          type: string
+        blob_digest:
+          type: string
+        size:
+          type: integer
+          format: int64
+        created_by:
+          type: string
+        shared_by:
+          type: integer
+    HistoryEntry:
+      description: "One build step from the config history"
+      type: object
+      required: [created_by, empty_layer]
+      properties:
+        created_by:
+          type: string
+        empty_layer:
+          type: boolean
+    Referrer:
+      description: "An artifact attached to an image, such as an SBOM or a signature"
+      type: object
+      required: [subject, digest, artifact_type, kind]
+      properties:
+        subject:
+          type: string
+        digest:
+          type: string
+        artifact_type:
+          type: string
+        kind:
+          type: string
+          enum: [sbom, signature, attestation, other]
+    StalenessInfo:
+      description: "A staleness verdict with the reasons behind it"
+      type: object
+      required: [verdict, reasons, base_drift_generations, untagged, inferred]
+      properties:
+        verdict:
+          $ref: "#/components/schemas/Verdict"
+        reasons:
+          type: array
+          items:
+            type: string
+        base_drift_generations:
+          type: integer
+        base_tag:
+          type: string
+        superseded_days:
+          type: integer
+        untagged:
+          type: boolean
+        inferred:
+          type: boolean
+    LineageInfo:
+      description: "Where an image sits in the lineage graph, with the evidence for its parent"
+      type: object
+      required: [status, generation, children, descendants, conflict, edges, ancestry]
+      properties:
+        status:
+          type: string
+          enum: [derived, root, unknown]
+        parent:
+          type: string
+        root:
+          type: string
+        generation:
+          type: integer
+        children:
+          type: integer
+        descendants:
+          type: integer
+        conflict:
+          type: boolean
+        edges:
+          type: array
+          items:
+            $ref: "#/components/schemas/Edge"
+        ancestry:
+          $ref: "#/components/schemas/Graph"
+    Explanation:
+      description: "Everything known about one image"
+      type: object
+      required: [image, lineage, staleness, layers, referrers, findings]
+      properties:
+        image:
+          $ref: "#/components/schemas/ImageInfo"
+        lineage:
+          $ref: "#/components/schemas/LineageInfo"
+        staleness:
+          $ref: "#/components/schemas/StalenessInfo"
+        layers:
+          type: array
+          items:
+            $ref: "#/components/schemas/LayerInfo"
+        history:
+          type: array
+          items:
+            $ref: "#/components/schemas/HistoryEntry"
+        referrers:
+          type: array
+          items:
+            $ref: "#/components/schemas/Referrer"
+        findings:
+          type: array
+          items:
+            type: string

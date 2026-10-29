@@ -1,0 +1,36 @@
+version: "2"
+run:
+  timeout: 10m
+linters:
+  default: standard
+  enable:
+    - gosec
+    - misspell
+    - revive
+    - staticcheck
+  settings:
+    revive:
+      rules:
+        - name: exported
+        - name: package-comments
+        - name: var-naming
+        - name: indent-error-flow
+        - name: error-strings
+        - name: receiver-naming
+        - name: unused-parameter
+          disabled: true
+    gosec:
+      excludes:
+        # Tests and tools write files with paths they build themselves.
+        - G304
+        - G306
+  exclusions:
+    generated: strict
+    presets:
+      - std-error-handling
+    rules:
+      - path: _test\.go
+        linters: [gosec]
+formatters:
+  enable:
+    - gofmt

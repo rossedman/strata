@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="generator" content="strata">
+<title>__TITLE__</title>
+<style>
+:root {
+  --ink: #0e0d16; --ink-2: #17152a; --ink-3: #2a2540; --ink-4: #0a0912;
+  --brand: #a99bff; --brand-2: #d6cfff; --brand-3: #5b47d6;
+  --cream: #f4f1ff; --mist: #c9c4dd; --dim: #8e8aa6;
+  --fresh: #5fd39a; --drifting: #e8c84a; --stale: #f08a5d; --abandoned: #a3a3ad; --conflict: #ff6b81;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--ink); color: var(--mist); font: 14px/1.5 Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+header { display: flex; align-items: center; gap: 16px; padding: 10px 16px; background: var(--ink-2); border-bottom: 1px solid var(--ink-3); flex-wrap: wrap; }
+header h1 { margin: 0; font-size: 15px; font-weight: 700; color: var(--cream); letter-spacing: -0.01em; }
+header h1 span { color: var(--brand); }
+header .meta { color: var(--dim); font-size: 12px; }
+.controls { display: flex; gap: 8px; align-items: center; margin-left: auto; flex-wrap: wrap; }
+input[type=search] { background: var(--ink-4); color: var(--cream); border: 1px solid var(--ink-3); border-radius: 6px; padding: 6px 10px; width: 220px; font: inherit; }
+input[type=search]:focus { outline: 2px solid var(--brand-3); border-color: var(--brand-3); }
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 9px; border: 1px solid var(--ink-3); border-radius: 999px; cursor: pointer; user-select: none; font-size: 12px; color: var(--mist); background: var(--ink-4); }
+.chip input { display: none; }
+.chip i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+.chip.off { opacity: .4; }
+button { background: var(--brand); color: var(--ink); border: 0; border-radius: 6px; padding: 6px 12px; font: inherit; font-weight: 600; cursor: pointer; }
+button.ghost { background: transparent; color: var(--mist); border: 1px solid var(--ink-3); font-weight: 500; }
+main { display: grid; grid-template-columns: 1fr 340px; height: calc(100% - 53px); }
+#cy { background: radial-gradient(circle at 20% 10%, rgba(169,155,255,.07), transparent 40%), var(--ink); }
+aside { border-left: 1px solid var(--ink-3); background: var(--ink-2); padding: 16px; overflow: auto; }
+aside h2 { margin: 0 0 4px; font-size: 15px; color: var(--cream); word-break: break-all; }
+aside .digest { font: 12px/1.4 "JetBrains Mono", ui-monospace, monospace; color: var(--dim); word-break: break-all; }
+aside dl { display: grid; grid-template-columns: 96px 1fr; gap: 4px 10px; margin: 14px 0; font-size: 13px; }
+aside dt { color: var(--dim); }
+aside dd { margin: 0; color: var(--mist); word-break: break-word; }
+aside ul { margin: 6px 0 0; padding-left: 18px; }
+.verdict { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; color: var(--ink); }
+.empty { color: var(--dim); }
+.legend { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--ink-3); font-size: 12px; color: var(--dim); }
+.legend div { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
+.legend .line { width: 28px; height: 0; border-top: 2px solid var(--dim); }
+.legend .dash { border-top-style: dashed; }
+.legend .red { border-top-color: var(--conflict); }
+@media (max-width: 760px) {
+  main { grid-template-columns: 1fr; grid-template-rows: 60% 40%; }
+  aside { border-left: 0; border-top: 1px solid var(--ink-3); }
+  input[type=search] { width: 100%; }
+  .controls { margin-left: 0; width: 100%; }
+}
+</style>
+</head>
+<body>
+<header>
+  <h1><span>strata</span> · <span id="title"></span></h1>
+  <div class="meta" id="meta"></div>
+  <div class="controls">
+    <input type="search" id="search" placeholder="Filter by name, label or repo" aria-label="Filter nodes">
+    <span id="chips"></span>
+    <button class="ghost" id="fit" type="button">Fit</button>
+  </div>
+</header>
+<main>
+  <div id="cy" role="img" aria-label="Lineage graph"></div>
+  <aside id="panel">
+    <p class="empty">Click a node to see its refs, labels, layers and staleness reasons.</p>
+    <div class="legend">
+      <div><span class="line"></span> parent inferred from layers</div>
+      <div><span class="line dash"></span> parent declared by a label or annotation</div>
+      <div><span class="line red"></span> declared parent conflicts with layers</div>
+    </div>
+  </aside>
+</main>
+<script type="application/json" id="data">/*__DATA__*/</script>
+<script>/*__VENDOR__*/</script>
+<script>
+(function () {
+  "use strict";
+  var data = JSON.parse(document.getElementById("data").textContent);
+  var colors = { fresh: "#5fd39a", drifting: "#e8c84a", stale: "#f08a5d", abandoned: "#a3a3ad", "": "#d9d5ec" };
+  var shapes = { image: "round-rectangle", external: "ellipse", phantom: "hexagon", collapsed: "round-rectangle", overflow: "tag" };
+  var up = data.kind === "ancestry";
+  var dir = data.kind === "descendants" ? "RIGHT" : "DOWN";
+  if (typeof cytoscapeElk !== "undefined") { cytoscape.use(cytoscapeElk); }
+  var esc = function (s) { return String(s).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); };
+  var short = function (d) { d = String(d).replace(/^phantom:/, ""); return d.indexOf("sha256:") === 0 ? d.slice(0, 19) : d; };
+  var bytes = function (n) { if (!n) { return "-"; } var u = ["B", "KiB", "MiB", "GiB", "TiB"], i = 0; while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; } return n.toFixed(i ? 1 : 0) + " " + u[i]; };
+
+  document.getElementById("title").textContent = data.title || data.kind;
+  document.title = "strata · " + (data.title || data.kind);
+  var images = data.nodes.reduce(function (n, x) { return n + (x.count || 1); }, 0);
+  document.getElementById("meta").textContent = data.nodes.length + " nodes · " + images + " images" + (data.hidden ? " · " + data.hidden + " hidden by the node budget" : "");
+
+  var elements = [];
+  data.nodes.forEach(function (n) {
+    elements.push({ data: { id: n.id, label: n.label + "\n" + (n.kind === "collapsed" || n.kind === "overflow" ? "" : short(n.id)), kind: n.kind, verdict: n.verdict || "", matched: !!n.matched, node: n } });
+  });
+  data.edges.forEach(function (e, i) {
+    var s = up ? e.child : e.parent, t = up ? e.parent : e.child;
+    elements.push({ data: { id: "e" + i, source: s, target: t, label: e.source, declared: e.source === "label" || e.source === "annotation", conflict: !!e.conflict } });
+  });
+
+  var cy = cytoscape({
+    container: document.getElementById("cy"),
+    elements: elements,
+    wheelSensitivity: 0.3,
+    style: [
+      { selector: "node", style: {
+        "shape": function (n) { return shapes[n.data("kind")] || "round-rectangle"; },
+        "background-color": function (n) { return n.data("kind") === "phantom" ? "#0e0d16" : colors[n.data("verdict")] || colors[""]; },
+        "border-width": function (n) { return n.data("matched") ? 3 : n.data("kind") === "collapsed" ? 4 : 1; },
+        "border-color": function (n) { return n.data("matched") ? "#a99bff" : n.data("kind") === "collapsed" ? "#5b47d6" : "#2a2540"; },
+        "border-style": function (n) { return n.data("kind") === "phantom" ? "dashed" : n.data("kind") === "collapsed" ? "double" : "solid"; },
+        "label": "data(label)", "text-wrap": "wrap", "text-valign": "center", "text-halign": "center",
+        "font-size": 11, "font-family": "Inter, ui-sans-serif, system-ui, sans-serif",
+        "color": function (n) { return n.data("kind") === "phantom" ? "#c9c4dd" : "#14111f"; },
+        "width": "label", "height": "label", "padding": "10px"
+      } },
+      { selector: "edge", style: {
+        "width": function (e) { return e.data("conflict") ? 2.5 : 1.5; },
+        "line-color": function (e) { return e.data("conflict") ? "#ff6b81" : "#6b6880"; },
+        "target-arrow-color": function (e) { return e.data("conflict") ? "#ff6b81" : "#6b6880"; },
+        "target-arrow-shape": "triangle", "curve-style": "bezier",
+        "line-style": function (e) { return e.data("declared") ? "dashed" : "solid"; },
+        "label": "data(label)", "font-size": 9, "color": "#8e8aa6", "text-background-color": "#0e0d16", "text-background-opacity": 1, "text-background-padding": "2px"
+      } },
+      { selector: "node:selected", style: { "border-width": 3, "border-color": "#d6cfff" } },
+      { selector: ".hidden", style: { "display": "none" } },
+      { selector: ".dim", style: { "opacity": 0.2 } }
+    ],
+    layout: typeof cytoscapeElk !== "undefined"
+      ? { name: "elk", elk: { algorithm: "layered", "elk.direction": dir, "elk.spacing.nodeNode": 24, "elk.layered.spacing.nodeNodeBetweenLayers": 60 } }
+      : { name: "breadthfirst", directed: true }
+  });
+
+  var panel = document.getElementById("panel");
+  var legend = panel.querySelector(".legend").outerHTML;
+  function row(k, v) { return v === undefined || v === null || v === "" ? "" : "<dt>" + esc(k) + "</dt><dd>" + v + "</dd>"; }
+  function show(n) {
+    var h = "<h2>" + esc(n.label) + "</h2><div class=digest>" + esc(n.id) + "</div><dl>";
+    if (n.verdict) { h += row("verdict", "<span class=verdict style=background:" + (colors[n.verdict] || colors[""]) + ">" + esc(n.verdict) + "</span>"); }
+    h += row("kind", esc(n.kind));
+    h += row("repo", esc(n.repo || ""));
+    h += row("platform", esc(n.platform || ""));
+    h += row("created", esc(n.created || ""));
+    h += row("size", n.size ? esc(bytes(n.size)) : "");
+    h += row("layers", n.layers ? esc(n.layers) : "");
+    h += row("generation", esc(n.depth));
+    if (n.refs && n.refs.length) { h += row("refs", "<ul>" + n.refs.map(function (r) { return "<li>" + esc(r) + "</li>"; }).join("") + "</ul>"); }
+    if (n.reasons && n.reasons.length) { h += row("reasons", "<ul>" + n.reasons.map(function (r) { return "<li>" + esc(r) + "</li>"; }).join("") + "</ul>"); }
+    if (n.members && n.members.length) { h += row("images", "<ul>" + n.members.map(function (r) { return "<li>" + esc(r) + "</li>"; }).join("") + "</ul>"); }
+    h += "</dl>";
+    panel.innerHTML = h + legend;
+  }
+  cy.on("tap", "node", function (ev) { show(ev.target.data("node")); });
+
+  var verdicts = ["fresh", "drifting", "stale", "abandoned"];
+  var on = { fresh: true, drifting: true, stale: true, abandoned: true };
+  var chips = document.getElementById("chips");
+  verdicts.forEach(function (v) {
+    var l = document.createElement("label");
+    l.className = "chip";
+    l.innerHTML = "<input type=checkbox checked><i style=background:" + colors[v] + "></i>" + v;
+    l.querySelector("input").addEventListener("change", function (ev) { on[v] = ev.target.checked; l.classList.toggle("off", !on[v]); apply(); });
+    chips.appendChild(l);
+  });
+  var search = document.getElementById("search");
+  function apply() {
+    var q = search.value.trim().toLowerCase();
+    cy.batch(function () {
+      cy.nodes().forEach(function (node) {
+        var n = node.data("node");
+        var visible = !n.verdict || on[n.verdict];
+        node.toggleClass("hidden", !visible);
+        var text = [n.label, n.repo, (n.refs || []).join(" "), (n.members || []).join(" ")].join(" ").toLowerCase();
+        node.toggleClass("dim", q !== "" && text.indexOf(q) < 0);
+      });
+    });
+  }
+  search.addEventListener("input", apply);
+  document.getElementById("fit").addEventListener("click", function () { cy.fit(undefined, 30); });
+})();
+</script>
+</body>
+</html>
