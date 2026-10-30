@@ -119,6 +119,7 @@ nav:
           - strata stale: reference/commands/strata_stale.md
           - strata summary: reference/commands/strata_summary.md
           - strata trend: reference/commands/strata_trend.md
+          - strata ui: reference/commands/strata_ui.md
           - strata version: reference/commands/strata_version.md
       - HTTP API: reference/api.md
   - Project:
