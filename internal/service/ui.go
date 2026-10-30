@@ -580,6 +580,7 @@ type SearchOptions struct {
 	Verdict  []string
 	Platform []string
 	Age      []string
+	Pushed   []string
 	Offset   int
 	Limit    int
 }
@@ -621,15 +622,24 @@ type SearchResult struct {
 	Facets []Facet     `json:"facets"`
 }
 
-// ageBucket is the SQL for an image's age bucket.
-const ageBucket = `CASE WHEN age_days IS NULL THEN 'unknown' WHEN age_days < 30 THEN '< 30 days'
-	WHEN age_days < 180 THEN '30–180 days' WHEN age_days < 365 THEN '180 days–1 year' ELSE '> 1 year' END`
-
-// ageFilter is the query-language form of each age bucket.
-var ageFilter = map[string]string{
-	"< 30 days": "age < 30d", "30–180 days": "(age >= 30d and age < 180d)",
-	"180 days–1 year": "(age >= 180d and age < 1y)", "> 1 year": "age >= 1y", "unknown": "not age exists",
+// dayBucket groups a column of days into the age buckets.
+func dayBucket(col string) string {
+	return `CASE WHEN ` + col + ` IS NULL THEN 'unknown' WHEN ` + col + ` < 30 THEN '< 30 days'
+	WHEN ` + col + ` < 180 THEN '30–180 days' WHEN ` + col + ` < 365 THEN '180 days–1 year' ELSE '> 1 year' END`
 }
+
+// dayFilter is the query-language form of an age bucket over a days
+// field, such as age or pushed_age.
+func dayFilter(field, bucket string) (string, bool) {
+	f, ok := map[string]string{
+		"< 30 days": "F < 30d", "30–180 days": "(F >= 30d and F < 180d)",
+		"180 days–1 year": "(F >= 180d and F < 1y)", "> 1 year": "F >= 1y", "unknown": "not F exists",
+	}[bucket]
+	return strings.ReplaceAll(f, "F", field), ok
+}
+
+// dayFacets are the facets over age buckets, in bucket order.
+var dayFacets = map[string]bool{"Age": true, "Pushed": true}
 
 // facetDef describes one facet: its name, the query-language field, the
 // SQL expression it groups by, and the selected values.
@@ -658,7 +668,8 @@ func (s *Service) Search(ctx context.Context, o SearchOptions) (*SearchResult, e
 		{"Team", "label.team", "labels['team']::VARCHAR", o.Team},
 		{"Root base", "root", rootExpr, o.Root},
 		{"Platform", "platform", "platform", o.Platform},
-		{"Age", "age", ageBucket, o.Age},
+		{"Age", "age", dayBucket("age_days"), o.Age},
+		{"Pushed", "pushed_age", dayBucket("pushed_age_days"), o.Pushed},
 	}
 	where := func(skip int) (string, []any) {
 		parts, args := []string{c.Where}, append([]any{}, c.Args...)
@@ -714,6 +725,11 @@ func (s *Service) Search(ctx context.Context, o SearchOptions) (*SearchResult, e
 		if err != nil {
 			return nil, err
 		}
+		// Registries without push times leave every image unknown; the
+		// facet would say nothing.
+		if f.name == "Pushed" && len(f.selected) == 0 && onlyUnknown(vals) {
+			continue
+		}
 		res.Facets = append(res.Facets, Facet{Name: f.name, Field: f.field, Values: vals})
 	}
 	return res, nil
@@ -724,7 +740,7 @@ func (s *Service) Search(ctx context.Context, o SearchOptions) (*SearchResult, e
 func (s *Service) facetValues(ctx context.Context, f facetDef, where string, args []any) ([]FacetValue, error) {
 	limit := 10
 	order := "n DESC, v"
-	if f.name == "Verdict" || f.name == "Age" {
+	if f.name == "Verdict" || dayFacets[f.name] {
 		limit, order = 10, "v"
 	}
 	rows, err := s.db().QueryContext(ctx, `SELECT coalesce(CAST(`+f.expr+` AS VARCHAR), '') AS v, count(*) AS n
@@ -760,11 +776,21 @@ func (s *Service) facetValues(ctx context.Context, f facetDef, where string, arg
 		rank := map[string]int{"fresh": 0, "drifting": 1, "stale": 2, "abandoned": 3}
 		sort.SliceStable(out, func(i, j int) bool { return rank[out[i].Value] < rank[out[j].Value] })
 	}
-	if f.name == "Age" {
+	if dayFacets[f.name] {
 		rank := map[string]int{"< 30 days": 0, "30–180 days": 1, "180 days–1 year": 2, "> 1 year": 3, "unknown": 4}
 		sort.SliceStable(out, func(i, j int) bool { return rank[out[i].Value] < rank[out[j].Value] })
 	}
 	return out, rows.Err()
+}
+
+// onlyUnknown reports whether a facet has no value but unknown.
+func onlyUnknown(vals []FacetValue) bool {
+	for _, v := range vals {
+		if v.Value != "unknown" {
+			return false
+		}
+	}
+	return true
 }
 
 // foldFilter writes the filter with every facet selection folded in, as
@@ -785,10 +811,10 @@ func foldFilter(filter string, facets []facetDef) string {
 		if len(f.selected) == 0 {
 			continue
 		}
-		if f.field == "age" {
+		if f.field == "age" || f.field == "pushed_age" {
 			var or []string
 			for _, v := range f.selected {
-				if a, ok := ageFilter[v]; ok {
+				if a, ok := dayFilter(f.field, v); ok {
 					or = append(or, a)
 				}
 			}

@@ -8,7 +8,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
+	"github.com/rossedman/strata/internal/crawl"
+	"github.com/rossedman/strata/internal/ecr"
+	"github.com/rossedman/strata/internal/query"
 	"github.com/rossedman/strata/internal/stale"
 )
 
@@ -25,6 +29,86 @@ type Registry struct {
 	Workers int `mapstructure:"workers"`
 	// Rate is the request limit per second; 0 means unlimited.
 	Rate float64 `mapstructure:"rate"`
+	// Provider picks how the registry is listed: auto (the default) uses
+	// the ECR API for ECR hosts, ecr forces it, and distribution uses the
+	// plain distribution API everywhere.
+	Provider string `mapstructure:"provider"`
+	// IncludeRepos and ExcludeRepos are repo globs, named without the
+	// host: "*" stays within a path segment and "**" crosses them.
+	IncludeRepos []string `mapstructure:"include-repos"`
+	ExcludeRepos []string `mapstructure:"exclude-repos"`
+	// IncludeTags and ExcludeTags are tag globs, such as v* or pr-*.
+	IncludeTags []string `mapstructure:"include-tags"`
+	ExcludeTags []string `mapstructure:"exclude-tags"`
+	// Platforms keeps only these platforms of multi-platform images, such
+	// as linux/amd64.
+	Platforms []string `mapstructure:"platforms"`
+	// PushedSince skips images pushed longer ago than this, such as 90d or
+	// 1y. It needs the ECR API.
+	PushedSince string `mapstructure:"pushed-since"`
+}
+
+// Providers.
+const (
+	ProviderAuto         = "auto"
+	ProviderECR          = "ecr"
+	ProviderDistribution = "distribution"
+)
+
+// UsesECR reports whether the registry is listed through the ECR API.
+func (r Registry) UsesECR() bool {
+	switch r.Provider {
+	case ProviderECR:
+		return true
+	case ProviderDistribution:
+		return false
+	}
+	_, _, ok := ecr.ParseHost(r.Host)
+	return ok
+}
+
+// Check reports settings that would fail the crawl.
+func (r Registry) Check() error {
+	if r.Host == "" {
+		return fmt.Errorf("host must be set")
+	}
+	if r.Workers < 0 || r.Rate < 0 {
+		return fmt.Errorf("workers and rate must not be negative")
+	}
+	switch r.Provider {
+	case "", ProviderAuto, ProviderECR, ProviderDistribution:
+	default:
+		return fmt.Errorf("provider %q: use auto, ecr or distribution", r.Provider)
+	}
+	if r.Provider == ProviderECR {
+		if _, _, ok := ecr.ParseHost(r.Host); !ok {
+			return fmt.Errorf("provider ecr needs an ECR host, such as 123456789012.dkr.ecr.us-east-1.amazonaws.com")
+		}
+	}
+	if _, err := r.Filter(); err != nil {
+		return err
+	}
+	if r.PushedSince != "" && !r.UsesECR() {
+		return fmt.Errorf("pushed-since needs a registry that reports push times, such as ECR")
+	}
+	return nil
+}
+
+// Filter returns the registry's crawl filter.
+func (r Registry) Filter() (crawl.Filter, error) {
+	f := crawl.Filter{
+		IncludeRepos: r.IncludeRepos, ExcludeRepos: r.ExcludeRepos,
+		IncludeTags: r.IncludeTags, ExcludeTags: r.ExcludeTags,
+		Platforms: r.Platforms,
+	}
+	if r.PushedSince != "" {
+		days, err := query.ParseDays(r.PushedSince)
+		if err != nil {
+			return f, fmt.Errorf("pushed-since: %w", err)
+		}
+		f.PushedSince = time.Duration(days * float64(24*time.Hour))
+	}
+	return f, f.Validate()
 }
 
 // Serve configures strata serve.
@@ -114,11 +198,8 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("db must be set")
 	}
 	for i, r := range c.Registries {
-		if r.Host == "" {
-			return fmt.Errorf("registries[%d].host must be set", i)
-		}
-		if r.Workers < 0 || r.Rate < 0 {
-			return fmt.Errorf("registries[%d]: workers and rate must not be negative", i)
+		if err := r.Check(); err != nil {
+			return fmt.Errorf("registries[%d]: %w", i, err)
 		}
 	}
 	return nil

@@ -310,7 +310,7 @@
   });
 
   // ---------- search ----------
-  var FACET_PARAMS = { Verdict: "verdict", Team: "team", "Root base": "root", Platform: "platform", Age: "age" };
+  var FACET_PARAMS = { Verdict: "verdict", Team: "team", "Root base": "root", Platform: "platform", Age: "age", Pushed: "pushed" };
   var EXAMPLES = ['stale in ["stale", "abandoned"]', "stale.base_drift", "tags = 0 and descendants = 0", "not has:sbom", "conflict"];
   function searchView(el, params) {
     var q = params.get("q") || "", page = parseInt(params.get("page") || "1", 10) || 1, limit = 50;
@@ -420,6 +420,8 @@
       "<dt>Tags</dt><dd>" + (im.tags && im.tags.length ? esc(im.tags.map(nice).join(", ")) : "none") + "</dd>" +
       "<dt>Platform</dt><dd>" + esc(im.platform) + (im.platforms && im.platforms.length > 1 ? ' <span class="pct">(index: ' + esc(im.platforms.join(", ")) + ")</span>" : "") + "</dd>" +
       "<dt>Created</dt><dd>" + (im.created ? esc(im.created.slice(0, 10)) + " (" + im.age_days + " days ago)" : "unknown") + "</dd>" +
+      (im.pushed ? "<dt>Pushed</dt><dd>" + esc(im.pushed.slice(0, 10)) + "</dd>" : "") +
+      (im.first_seen ? "<dt>First seen</dt><dd>" + esc(im.first_seen.slice(0, 10)) + "</dd>" : "") +
       "<dt>Referrers</dt><dd>" + (ex.referrers.length ? esc(ex.referrers.map(function (r) { return r.kind; }).join(", ")) : "none") + "</dd>" +
       "<dt>Runs as</dt><dd>" + esc(im.config.user || "root (empty)") + "</dd>" +
       (im.config.entrypoint && im.config.entrypoint.length ? '<dt>Entrypoint</dt><dd class="mono">' + esc(im.config.entrypoint.join(" ")) + "</dd>" : "") +

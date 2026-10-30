@@ -48,15 +48,20 @@ func (s *Server) GetOutline(ctx context.Context, r GetOutlineRequestObject) (Get
 // Search runs a filter with facet selections.
 func (s *Server) Search(ctx context.Context, r SearchRequestObject) (SearchResponseObject, error) {
 	p := r.Params
-	var ages []string
+	var ages, pushed []string
 	if p.Age != nil {
 		for _, a := range *p.Age {
 			ages = append(ages, string(a))
 		}
 	}
+	if p.Pushed != nil {
+		for _, a := range *p.Pushed {
+			pushed = append(pushed, string(a))
+		}
+	}
 	res, err := s.svc.Search(ctx, service.SearchOptions{
 		Filter: str(p.Filter), Team: list(p.Team), Root: list(p.Root), Verdict: list(p.Verdict),
-		Platform: list(p.Platform), Age: ages, Offset: num(p.Offset, 0), Limit: num(p.Limit, 50),
+		Platform: list(p.Platform), Age: ages, Pushed: pushed, Offset: num(p.Offset, 0), Limit: num(p.Limit, 50),
 	})
 	if err == nil {
 		var out SearchResult

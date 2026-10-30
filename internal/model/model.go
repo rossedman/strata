@@ -125,6 +125,16 @@ type TagEvent struct {
 	Source string    `json:"source"`
 }
 
+// Push is what a registry's own API reports about one manifest in one
+// repo: when it was pushed and when it was last pulled. Zero times are
+// unknown.
+type Push struct {
+	Repo       string    `json:"repo"`
+	Digest     string    `json:"digest"`
+	PushedAt   time.Time `json:"pushed_at"`
+	LastPulled time.Time `json:"last_pulled"`
+}
+
 // Referrer is an artifact attached to an image, such as an SBOM or a
 // signature.
 type Referrer struct {

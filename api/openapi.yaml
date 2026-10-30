@@ -361,6 +361,17 @@ paths:
             items:
               type: string
               enum: ["< 30 days", "30–180 days", "180 days–1 year", "> 1 year", "unknown"]
+        - name: pushed
+          in: query
+          required: false
+          description: Selected push-age buckets, from registries that report push times (ECR)
+          style: form
+          explode: true
+          schema:
+            type: array
+            items:
+              type: string
+              enum: ["< 30 days", "30–180 days", "180 days–1 year", "> 1 year", "unknown"]
         - $ref: "#/components/parameters/Offset"
         - $ref: "#/components/parameters/Limit"
       responses:
@@ -761,6 +772,14 @@ components:
           format: date-time
         age_days:
           type: integer
+        pushed:
+          type: string
+          format: date-time
+          description: When the registry says the image was first pushed (ECR only)
+        first_seen:
+          type: string
+          format: date-time
+          description: When strata first indexed the image
         size:
           type: integer
           format: int64

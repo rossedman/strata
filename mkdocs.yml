@@ -87,6 +87,7 @@ nav:
       - Install and first run: getting-started.md
       - Configuration: configuration.md
   - Guides:
+      - Crawling large registries: guides/crawling.md
       - Lineage: guides/lineage.md
       - Staleness: guides/staleness.md
       - Query language: guides/query-language.md

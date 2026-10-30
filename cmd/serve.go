@@ -144,7 +144,11 @@ func reindexLoop(ctx context.Context, svc *service.Service, every time.Duration)
 			return
 		case <-t.C:
 			for _, r := range state.Config.Registries {
-				opts := crawlOptions(r)
+				opts, err := crawlOptions(ctx, r)
+				if err != nil {
+					state.Logger.Error("re-crawl failed", "registry", r.Host, "err", err)
+					continue
+				}
 				opts.External = state.Config.External
 				res, err := svc.Index(ctx, opts)
 				if err != nil {

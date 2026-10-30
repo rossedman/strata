@@ -25,6 +25,13 @@ registries:
     repos:               # seed the repo list when _catalog is missing or slow
       - payments/api
       - payments/worker
+  - host: 123456789012.dkr.ecr.us-east-1.amazonaws.com
+    # ECR hosts are listed through the ECR API with AWS credentials.
+    include-repos: ["team-*/**"]   # repo globs, without the host
+    exclude-repos: ["**/sandbox"]
+    exclude-tags: ["pr-*", "sha-*"]
+    platforms: [linux/amd64]       # skip other platforms of multi-arch images
+    pushed-since: 1y               # ECR only: skip images pushed before this
 
 # Upstream bases fetched so roots resolve to names.
 external:
@@ -79,6 +86,13 @@ log-level: info
 | `registries[].insecure` | `false` | Allow plain HTTP |
 | `registries[].workers` | `16` | Concurrent requests |
 | `registries[].rate` | `0` | Requests per second, 0 is unlimited |
+| `registries[].provider` | `auto` | `auto` lists ECR hosts through the ECR API; `ecr` forces it; `distribution` uses the plain registry API everywhere |
+| `registries[].include-repos` | all | Crawl only repos matching one of these globs |
+| `registries[].exclude-repos` | `[]` | Skip repos matching one of these globs |
+| `registries[].include-tags` | all | Crawl only tags matching one of these globs |
+| `registries[].exclude-tags` | `[]` | Skip tags matching one of these globs |
+| `registries[].platforms` | all | Keep only these platforms of multi-platform images |
+| `registries[].pushed-since` | | Skip images pushed longer ago than this, such as `90d` (ECR only) |
 | `external` | `[]` | Full refs of upstream bases to fetch |
 | `referrers` | `true` | Fetch referrers and cosign tags |
 | `platform` | `linux/amd64` | Default platform for multi-platform refs |
@@ -92,5 +106,7 @@ log-level: info
 | `serve.auth-header` | | Trusted header set by your auth proxy |
 | `serve.url` | | Server CLI commands should query instead of the file |
 | `log-level` | `info` | `debug`, `info`, `warn` or `error` |
+
+See [Crawling large registries](guides/crawling.md) for how the filters and the ECR API cut crawl time.
 
 Accessible output for screen readers: set `STRATA_ACCESSIBLE=1` to replace the spinner with plain progress lines. Colors follow `NO_COLOR` and switch off when output is not a terminal.

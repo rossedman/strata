@@ -52,6 +52,12 @@ type Options struct {
 	// EnvAllowlist names environment variables whose values are safe to
 	// store.
 	EnvAllowlist []string
+	// Filter narrows which repos, tags, platforms and images are fetched.
+	Filter Filter
+	// Lister lists repos and images through the registry's own API, such
+	// as ECR's, instead of the catalog, tag list and one request per tag.
+	// It also reports push and pull times.
+	Lister Lister
 	// Redactions are regular expressions scrubbed from history commands.
 	Redactions []string
 	// BatchSize is how many images are written per transaction.
@@ -77,6 +83,41 @@ type Stats struct {
 	TagMoves  int64 `json:"tag_moves"`
 	Requests  int64 `json:"requests"`
 	Referrers int64 `json:"referrers"`
+	// Filtered counts what the filter skipped before fetching it.
+	ReposFiltered  int64 `json:"repos_filtered"`
+	TagsFiltered   int64 `json:"tags_filtered"`
+	ImagesFiltered int64 `json:"images_filtered"`
+}
+
+// RequestsPerImage is the registry requests the crawl made for each new
+// image, or zero when it found none.
+func (s Stats) RequestsPerImage() float64 {
+	if s.Images == 0 {
+		return 0
+	}
+	return float64(s.Requests) / float64(s.Images)
+}
+
+// Lister lists a registry through its own API.
+type Lister interface {
+	// Repos lists every repository, named without the registry host.
+	Repos(ctx context.Context) ([]string, error)
+	// Images lists every manifest in a repository, tagged or not.
+	Images(ctx context.Context, repo string) ([]Listed, error)
+}
+
+// Listed is one manifest a Lister reports.
+type Listed struct {
+	Digest    string
+	MediaType string
+	Tags      []string
+	// PushedAt and LastPulled are zero when unknown.
+	PushedAt   time.Time
+	LastPulled time.Time
+	// Subject is the manifest an artifact, such as an SBOM or a
+	// signature, is attached to; ArtifactType says what it is.
+	Subject      string
+	ArtifactType string
 }
 
 // crawler holds the state shared by one crawl.
@@ -86,6 +127,7 @@ type crawler struct {
 	remote  []remote.Option
 	nameOpt []name.Option
 	red     *Redactor
+	match   *matcher
 	stats   Stats
 	sem     chan struct{}
 	// configs caches parsed configs by digest so each is fetched once.
@@ -119,7 +161,14 @@ func Crawl(ctx context.Context, st *store.Store, opts Options) (Stats, error) {
 	if err != nil {
 		return Stats{}, fmt.Errorf("redaction pattern: %w", err)
 	}
-	c := &crawler{opts: opts, st: st, red: red, sem: make(chan struct{}, opts.Workers)}
+	match, err := opts.Filter.compile()
+	if err != nil {
+		return Stats{}, err
+	}
+	if match.pushedSince > 0 && opts.Lister == nil && opts.Registry != "" {
+		return Stats{}, fmt.Errorf("pushed-since needs a registry that reports push times, such as ECR")
+	}
+	c := &crawler{opts: opts, st: st, red: red, match: match, sem: make(chan struct{}, opts.Workers)}
 	base := opts.Transport
 	if base == nil {
 		base = remote.DefaultTransport
@@ -135,6 +184,13 @@ func Crawl(ctx context.Context, st *store.Store, opts Options) (Stats, error) {
 		remote.WithTransport(rt),
 		remote.WithUserAgent(opts.UserAgent),
 	}
+	// One puller for the whole crawl, so the registry handshake and token
+	// exchange happen once per repo instead of before every request.
+	puller, err := remote.NewPuller(c.remote...)
+	if err != nil {
+		return Stats{}, fmt.Errorf("registry client: %w", err)
+	}
+	c.remote = append(c.remote, remote.Reuse(puller))
 	if opts.Insecure {
 		c.nameOpt = append(c.nameOpt, name.Insecure)
 	}
@@ -148,6 +204,9 @@ func Crawl(ctx context.Context, st *store.Store, opts Options) (Stats, error) {
 			return c.stats, err
 		}
 	}
+	opts.Logger.Info("crawl finished", "registry", opts.Registry, "new_images", c.stats.Images,
+		"requests", c.stats.Requests, "requests_per_image", fmt.Sprintf("%.1f", c.stats.RequestsPerImage()),
+		"repos_filtered", c.stats.ReposFiltered, "tags_filtered", c.stats.TagsFiltered, "images_filtered", c.stats.ImagesFiltered)
 	return c.stats, nil
 }
 
@@ -159,7 +218,13 @@ func (c *crawler) crawlRegistry(ctx context.Context) error {
 		return err
 	}
 	repos := c.opts.Repos
-	if len(repos) == 0 {
+	switch {
+	case len(repos) > 0:
+	case c.opts.Lister != nil:
+		if repos, err = c.opts.Lister.Repos(ctx); err != nil {
+			return fmt.Errorf("list repos: %w", err)
+		}
+	default:
 		if repos, err = c.catalog(ctx); err != nil {
 			return err
 		}
@@ -172,6 +237,10 @@ func (c *crawler) crawlRegistry(ctx context.Context) error {
 			return fmt.Errorf("repo %q: %w", r, err)
 		}
 		full := RepoName(repo)
+		if !c.match.repo(r) {
+			atomic.AddInt64(&c.stats.ReposFiltered, 1)
+			continue
+		}
 		if done[full] {
 			atomic.AddInt64(&c.stats.Skipped, 1)
 			continue
@@ -235,9 +304,20 @@ type tagResult struct {
 // manifests and configs the index has not seen.
 func (c *crawler) crawlRepo(ctx context.Context, repo name.Repository) error {
 	full := RepoName(repo)
-	tags, err := c.listTags(ctx, repo)
-	if err != nil {
-		return err
+	now := c.opts.Now().UTC()
+	batch := &store.Batch{}
+	var tags []string
+	var listed map[string]*Listed
+	if c.opts.Lister != nil {
+		var err error
+		if tags, listed, err = c.listImages(ctx, repo, batch); err != nil {
+			return err
+		}
+	} else {
+		var err error
+		if tags, err = c.listTags(ctx, repo); err != nil {
+			return err
+		}
 	}
 	known, err := c.st.KnownDigests(ctx, full)
 	if err != nil {
@@ -247,9 +327,7 @@ func (c *crawler) crawlRepo(ctx context.Context, repo name.Repository) error {
 	if err != nil {
 		return err
 	}
-	now := c.opts.Now().UTC()
 	var mu sync.Mutex
-	batch := &store.Batch{}
 	seenDigest := map[string]bool{}
 	flush := func(force bool) error {
 		if !force && len(batch.Images) < c.opts.BatchSize {
@@ -264,9 +342,21 @@ func (c *crawler) crawlRepo(ctx context.Context, repo name.Repository) error {
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(2 * c.opts.Workers)
 	for _, tag := range tags {
+		if !c.match.tag(tag) {
+			atomic.AddInt64(&c.stats.TagsFiltered, 1)
+			continue
+		}
+		var desc *Listed
+		if listed != nil {
+			desc = listed[tag]
+			if !known[desc.Digest] && !c.match.pushed(desc.PushedAt, now) {
+				atomic.AddInt64(&c.stats.ImagesFiltered, 1)
+				continue
+			}
+		}
 		atomic.AddInt64(&c.stats.Tags, 1)
 		g.Go(func() error {
-			res, err := c.crawlTag(gctx, repo, tag, func(d string) bool {
+			res, err := c.crawlTag(gctx, repo, tag, desc, func(d string) bool {
 				mu.Lock()
 				defer mu.Unlock()
 				if known[d] || seenDigest[d] {
@@ -303,6 +393,8 @@ func (c *crawler) crawlRepo(ctx context.Context, repo name.Repository) error {
 	for _, t := range tags {
 		current[t] = true
 	}
+	// Tags the filter skipped are left as the index last saw them; only
+	// tags the registry no longer lists are deleted.
 	for t := range prev {
 		if !current[t] {
 			batch.DeleteTags = append(batch.DeleteTags, model.Tag{Repo: full, Tag: t})
@@ -312,6 +404,33 @@ func (c *crawler) crawlRepo(ctx context.Context, repo name.Repository) error {
 	}
 	c.opts.Logger.Debug("repo crawled", "repo", full, "tags", len(tags))
 	return flush(true)
+}
+
+// listImages lists a repo through the Lister. It returns the sorted tags
+// and the manifest each points at, and adds push times and attached
+// artifacts to the batch, so no per-tag requests are needed.
+func (c *crawler) listImages(ctx context.Context, repo name.Repository, batch *store.Batch) ([]string, map[string]*Listed, error) {
+	full := RepoName(repo)
+	images, err := c.opts.Lister.Images(ctx, repo.RepositoryStr())
+	if err != nil {
+		return nil, nil, fmt.Errorf("list images: %w", err)
+	}
+	byTag := map[string]*Listed{}
+	var tags []string
+	for i := range images {
+		l := &images[i]
+		batch.Pushes = append(batch.Pushes, model.Push{Repo: full, Digest: l.Digest, PushedAt: l.PushedAt, LastPulled: l.LastPulled})
+		if l.Subject != "" && c.opts.Referrers {
+			batch.Referrers = append(batch.Referrers, model.Referrer{Subject: l.Subject, Digest: l.Digest, ArtifactType: l.ArtifactType, Kind: model.ClassifyArtifact(l.ArtifactType)})
+			atomic.AddInt64(&c.stats.Referrers, 1)
+		}
+		for _, t := range l.Tags {
+			byTag[t] = l
+			tags = append(tags, t)
+		}
+	}
+	sort.Strings(tags)
+	return tags, byTag, nil
 }
 
 // listTags lists a repo's tags, sorted.
@@ -336,19 +455,13 @@ func (c *crawler) acquire(_ context.Context) {
 func (c *crawler) release() { <-c.sem }
 
 // crawlTag resolves a tag to a digest and, if seen reports the digest is
-// new, fetches its manifests and configs. Cosign signature tags become
-// referrers of the image they sign.
-func (c *crawler) crawlTag(ctx context.Context, repo name.Repository, tag string, seen func(string) bool) (*tagResult, error) {
-	ref := repo.Tag(tag)
-	c.acquire(ctx)
-	desc, err := remote.Head(ref, c.remote...)
-	c.release()
-	if err != nil {
-		var terr *transport.Error
-		if errors.As(err, &terr) && terr.StatusCode == http.StatusNotFound {
-			return nil, nil // deleted between list and head
-		}
-		return nil, fmt.Errorf("resolve %s: %w", ref, err)
+// new, fetches its manifests and configs. A tag the Lister already
+// resolved (listed is non-nil) needs no request to resolve. Cosign
+// signature tags become referrers of the image they sign.
+func (c *crawler) crawlTag(ctx context.Context, repo name.Repository, tag string, listed *Listed, seen func(string) bool) (*tagResult, error) {
+	desc, err := c.resolve(ctx, repo.Tag(tag), listed)
+	if err != nil || desc == nil {
+		return nil, err
 	}
 	digest := desc.Digest.String()
 	res := &tagResult{tag: model.Tag{Repo: RepoName(repo), Tag: tag, Digest: digest, UpdatedAt: c.opts.Now().UTC()}}
@@ -363,6 +476,30 @@ func (c *crawler) crawlTag(ctx context.Context, repo name.Repository, tag string
 		return nil, err
 	}
 	return res, nil
+}
+
+// resolve returns the descriptor a tag points at: from the listing when
+// there is one, else with a HEAD request. It returns nil for a tag
+// deleted since it was listed.
+func (c *crawler) resolve(ctx context.Context, ref name.Tag, listed *Listed) (*v1.Descriptor, error) {
+	if listed != nil {
+		h, err := v1.NewHash(listed.Digest)
+		if err != nil {
+			return nil, fmt.Errorf("resolve %s: %w", ref, err)
+		}
+		return &v1.Descriptor{Digest: h, MediaType: types.MediaType(listed.MediaType)}, nil
+	}
+	c.acquire(ctx)
+	desc, err := remote.Head(ref, c.remote...)
+	c.release()
+	if err != nil {
+		var terr *transport.Error
+		if errors.As(err, &terr) && terr.StatusCode == http.StatusNotFound {
+			return nil, nil // deleted between list and head
+		}
+		return nil, fmt.Errorf("resolve %s: %w", ref, err)
+	}
+	return desc, nil
 }
 
 // fetch reads a manifest or index by digest and every image it holds.
@@ -381,6 +518,10 @@ func (c *crawler) fetch(ctx context.Context, repo name.Repository, digest v1.Has
 		}
 		for _, m := range im.Manifests {
 			if !m.MediaType.IsImage() || isAttestationManifest(m) {
+				continue
+			}
+			if m.Platform != nil && !c.match.platform(model.Platform{OS: m.Platform.OS, Arch: m.Platform.Architecture, Variant: m.Platform.Variant}) {
+				atomic.AddInt64(&c.stats.ImagesFiltered, 1)
 				continue
 			}
 			img, err := c.image(ctx, repo, m.Digest)
@@ -459,10 +600,11 @@ func (c *crawler) config(ctx context.Context, img v1.Image, digest v1.Hash) (*v1
 }
 
 // referrers lists artifacts attached to an image through the OCI
-// referrers API. Registries without it return nothing rather than fail
-// the crawl.
+// referrers API, unless a Lister already reported them. Registries
+// without the API return nothing rather than fail the crawl.
 func (c *crawler) referrers(ctx context.Context, repo name.Repository, digest v1.Hash) []model.Referrer {
-	if !c.opts.Referrers {
+	// A Lister reports attached artifacts with the listing.
+	if !c.opts.Referrers || c.opts.Lister != nil {
 		return nil
 	}
 	c.acquire(ctx)
