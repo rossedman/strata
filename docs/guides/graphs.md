@@ -41,4 +41,4 @@ An ancestry chain is always short, but the descendants of a popular base can run
 2. If that is not enough, the deepest nodes are cut and each parent that lost children gets a `+N more` node.
 3. `--depth` caps how far down a descendant walk goes, and `--budget N` raises the limit up to 20,000.
 
-The static HTML explorer is for subgraphs that fit the budget. For whole-registry browsing, use `strata serve`.
+The static HTML explorer is for subgraphs that fit the budget. For whole-registry browsing, use the [web UI](serving.md#the-web-ui) (`strata ui`).

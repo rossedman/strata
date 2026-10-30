@@ -139,6 +139,19 @@ var schema = []string{
 		descendants   INTEGER,
 		conflict      BOOLEAN
 	)`,
+	`CREATE INDEX IF NOT EXISTS lineage_parent ON lineage (parent)`,
+	// subtree_stats holds, for every lineage node, the images and verdict
+	// counts of its whole subtree, itself included, so the web UI can show
+	// any outline row with one lookup.
+	`CREATE TABLE IF NOT EXISTS subtree_stats (
+		id        VARCHAR PRIMARY KEY,
+		images    BIGINT,
+		fresh     BIGINT,
+		drifting  BIGINT,
+		stale     BIGINT,
+		abandoned BIGINT,
+		newest    TIMESTAMPTZ
+	)`,
 	`CREATE TABLE IF NOT EXISTS staleness (
 		digest                 VARCHAR PRIMARY KEY,
 		verdict                VARCHAR,

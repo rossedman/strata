@@ -30,22 +30,22 @@ func (e BaseVersionConfidence) Valid() bool {
 
 // Defines values for BaseVersionSource.
 const (
-	File       BaseVersionSource = "file"
-	Repo       BaseVersionSource = "repo"
-	Tag        BaseVersionSource = "tag"
-	TagHistory BaseVersionSource = "tag_history"
+	BaseVersionSourceFile       BaseVersionSource = "file"
+	BaseVersionSourceRepo       BaseVersionSource = "repo"
+	BaseVersionSourceTag        BaseVersionSource = "tag"
+	BaseVersionSourceTagHistory BaseVersionSource = "tag_history"
 )
 
 // Valid indicates whether the value is a known member of the BaseVersionSource enum.
 func (e BaseVersionSource) Valid() bool {
 	switch e {
-	case File:
+	case BaseVersionSourceFile:
 		return true
-	case Repo:
+	case BaseVersionSourceRepo:
 		return true
-	case Tag:
+	case BaseVersionSourceTag:
 		return true
-	case TagHistory:
+	case BaseVersionSourceTagHistory:
 		return true
 	default:
 		return false
@@ -159,25 +159,55 @@ func (e LineageInfoStatus) Valid() bool {
 
 // Defines values for NodeKind.
 const (
-	Collapsed NodeKind = "collapsed"
-	External  NodeKind = "external"
-	Image     NodeKind = "image"
-	Overflow  NodeKind = "overflow"
-	Phantom   NodeKind = "phantom"
+	NodeKindCollapsed NodeKind = "collapsed"
+	NodeKindExternal  NodeKind = "external"
+	NodeKindImage     NodeKind = "image"
+	NodeKindOverflow  NodeKind = "overflow"
+	NodeKindPhantom   NodeKind = "phantom"
 )
 
 // Valid indicates whether the value is a known member of the NodeKind enum.
 func (e NodeKind) Valid() bool {
 	switch e {
-	case Collapsed:
+	case NodeKindCollapsed:
 		return true
-	case External:
+	case NodeKindExternal:
 		return true
-	case Image:
+	case NodeKindImage:
 		return true
-	case Overflow:
+	case NodeKindOverflow:
 		return true
-	case Phantom:
+	case NodeKindPhantom:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OutlineRowKind.
+const (
+	OutlineRowKindBase     OutlineRowKind = "base"
+	OutlineRowKindExternal OutlineRowKind = "external"
+	OutlineRowKindImage    OutlineRowKind = "image"
+	OutlineRowKindPhantom  OutlineRowKind = "phantom"
+	OutlineRowKindRepo     OutlineRowKind = "repo"
+	OutlineRowKindUnrooted OutlineRowKind = "unrooted"
+)
+
+// Valid indicates whether the value is a known member of the OutlineRowKind enum.
+func (e OutlineRowKind) Valid() bool {
+	switch e {
+	case OutlineRowKindBase:
+		return true
+	case OutlineRowKindExternal:
+		return true
+	case OutlineRowKindImage:
+		return true
+	case OutlineRowKindPhantom:
+		return true
+	case OutlineRowKindRepo:
+		return true
+	case OutlineRowKindUnrooted:
 		return true
 	default:
 		return false
@@ -235,6 +265,33 @@ func (e Verdict) Valid() bool {
 	}
 }
 
+// Defines values for SearchParamsAge.
+const (
+	SearchParamsAgeGreaterThan1Year SearchParamsAge = "> 1 year"
+	SearchParamsAgeLessThan30Days   SearchParamsAge = "< 30 days"
+	SearchParamsAgeN180Days1Year    SearchParamsAge = "180 days–1 year"
+	SearchParamsAgeN30180Days       SearchParamsAge = "30–180 days"
+	SearchParamsAgeUnknown          SearchParamsAge = "unknown"
+)
+
+// Valid indicates whether the value is a known member of the SearchParamsAge enum.
+func (e SearchParamsAge) Valid() bool {
+	switch e {
+	case SearchParamsAgeGreaterThan1Year:
+		return true
+	case SearchParamsAgeLessThan30Days:
+		return true
+	case SearchParamsAgeN180Days1Year:
+		return true
+	case SearchParamsAgeN30180Days:
+		return true
+	case SearchParamsAgeUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
 // BaseVersion One digest a base tag has held, and how much is built on it
 type BaseVersion struct {
 	Children    int                   `json:"children"`
@@ -251,6 +308,15 @@ type BaseVersionConfidence string
 
 // BaseVersionSource defines model for BaseVersion.Source.
 type BaseVersionSource string
+
+// Change One line of a diff between snapshots
+type Change struct {
+	From   float32 `json:"from"`
+	Group  string  `json:"group"`
+	Kind   string  `json:"kind"`
+	Metric *string `json:"metric,omitempty"`
+	To     float32 `json:"to"`
+}
 
 // ConfigInfo Run-time fields from the image config; environment values are never stored except allowlisted ones
 type ConfigInfo struct {
@@ -308,6 +374,21 @@ type Explanation struct {
 
 	// Staleness A staleness verdict with the reasons behind it
 	Staleness StalenessInfo `json:"staleness"`
+}
+
+// Facet A field the search can be narrowed by
+type Facet struct {
+	// Field The query-language field the facet filters
+	Field  string       `json:"field"`
+	Name   string       `json:"name"`
+	Values []FacetValue `json:"values"`
+}
+
+// FacetValue One value of a facet and how many images have it
+type FacetValue struct {
+	Count    int64  `json:"count"`
+	Selected bool   `json:"selected"`
+	Value    string `json:"value"`
 }
 
 // Graph A lineage graph: an ancestry chain, a descendant tree, a query graph or the registry map
@@ -430,6 +511,69 @@ type Node struct {
 // NodeKind defines model for Node.Kind.
 type NodeKind string
 
+// Outline Children of an outline row
+type Outline struct {
+	Offset int          `json:"offset"`
+	Parent *string      `json:"parent,omitempty"`
+	Rows   []OutlineRow `json:"rows"`
+
+	// Total Rows at this level before paging
+	Total int64 `json:"total"`
+}
+
+// OutlineRow One row of the lineage outline: a base, a repo group or an image
+type OutlineRow struct {
+	Depth  int     `json:"depth"`
+	Digest *string `json:"digest,omitempty"`
+
+	// Drift Generations the row's base is behind its tag; for repo rows, the most among its images
+	Drift       *int `json:"drift,omitempty"`
+	HasChildren bool `json:"has_children"`
+
+	// Id Row id; pass it as parent to expand the row
+	Id string `json:"id"`
+
+	// Images Images in this row's subtree, itself included
+	Images int64          `json:"images"`
+	Kind   OutlineRowKind `json:"kind"`
+	Name   string         `json:"name"`
+
+	// Newest Creation time of the newest image in the subtree
+	Newest *time.Time `json:"newest,omitempty"`
+	Parent *string    `json:"parent,omitempty"`
+	Repo   *string    `json:"repo,omitempty"`
+	Tags   *[]string  `json:"tags,omitempty"`
+	Team   *string    `json:"team,omitempty"`
+
+	// Verdict A staleness verdict; empty when not computed yet
+	Verdict *Verdict `json:"verdict,omitempty"`
+
+	// Verdicts Images per verdict
+	Verdicts VerdictCounts `json:"verdicts"`
+}
+
+// OutlineRowKind defines model for OutlineRow.Kind.
+type OutlineRowKind string
+
+// Overview Headline numbers for the web UI
+type Overview struct {
+	ApparentBytes int64    `json:"apparent_bytes"`
+	Changes       []Change `json:"changes"`
+	DedupBytes    int64    `json:"dedup_bytes"`
+
+	// Host The registry host every image shares, if there is one
+	Host      *string    `json:"host,omitempty"`
+	Images    int64      `json:"images"`
+	IndexedAt *time.Time `json:"indexed_at,omitempty"`
+	Repos     int64      `json:"repos"`
+	Roots     []RootStat `json:"roots"`
+	Stacks    int64      `json:"stacks"`
+	Tags      int64      `json:"tags"`
+
+	// Verdicts Images per verdict
+	Verdicts VerdictCounts `json:"verdicts"`
+}
+
 // Referrer An artifact attached to an image, such as an SBOM or a signature
 type Referrer struct {
 	ArtifactType string       `json:"artifact_type"`
@@ -455,6 +599,44 @@ type Root struct {
 	Kind        string  `json:"kind"`
 	Label       string  `json:"label"`
 	StalePct    float32 `json:"stale_pct"`
+}
+
+// RootStat A root base and the stale images built on it
+type RootStat struct {
+	Id     string `json:"id"`
+	Images int64  `json:"images"`
+	Kind   string `json:"kind"`
+	Name   string `json:"name"`
+
+	// Verdicts Images per verdict
+	Verdicts VerdictCounts `json:"verdicts"`
+}
+
+// SearchHit One image in search results
+type SearchHit struct {
+	AgeDays  *int     `json:"age_days,omitempty"`
+	Digest   string   `json:"digest"`
+	Name     string   `json:"name"`
+	Platform string   `json:"platform"`
+	Repo     string   `json:"repo"`
+	Root     *string  `json:"root,omitempty"`
+	Size     int64    `json:"size"`
+	Tags     []string `json:"tags"`
+	Team     *string  `json:"team,omitempty"`
+
+	// Verdict A staleness verdict; empty when not computed yet
+	Verdict Verdict `json:"verdict"`
+}
+
+// SearchResult A page of search hits with facet counts
+type SearchResult struct {
+	Facets []Facet `json:"facets"`
+
+	// Filter The filter with every facet selection folded in, as strata query takes it
+	Filter string      `json:"filter"`
+	Hits   []SearchHit `json:"hits"`
+	Offset int         `json:"offset"`
+	Total  int64       `json:"total"`
 }
 
 // StalenessInfo A staleness verdict with the reasons behind it
@@ -490,6 +672,14 @@ type Table struct {
 // Verdict A staleness verdict; empty when not computed yet
 type Verdict string
 
+// VerdictCounts Images per verdict
+type VerdictCounts struct {
+	Abandoned int64 `json:"abandoned"`
+	Drifting  int64 `json:"drifting"`
+	Fresh     int64 `json:"fresh"`
+	Stale     int64 `json:"stale"`
+}
+
 // Budget defines model for Budget.
 type Budget = int
 
@@ -498,6 +688,12 @@ type Filter = string
 
 // GroupBy defines model for GroupBy.
 type GroupBy = string
+
+// Limit defines model for Limit.
+type Limit = int
+
+// Offset defines model for Offset.
+type Offset = int
 
 // Platform defines model for Platform.
 type Platform = string
@@ -544,6 +740,27 @@ type GetImageParams struct {
 	History *bool `form:"history,omitempty" json:"history,omitempty"`
 }
 
+// GetMapParams defines parameters for GetMap.
+type GetMapParams struct {
+	// Depth Levels below the roots
+	Depth *int `form:"depth,omitempty" json:"depth,omitempty"`
+}
+
+// GetOutlineParams defines parameters for GetOutline.
+type GetOutlineParams struct {
+	// Parent Outline row id to expand; empty for the roots
+	Parent *string `form:"parent,omitempty" json:"parent,omitempty"`
+
+	// OnlyStale Only rows holding stale or abandoned images
+	OnlyStale *bool `form:"only_stale,omitempty" json:"only_stale,omitempty"`
+
+	// Offset Rows to skip
+	Offset *Offset `form:"offset,omitempty" json:"offset,omitempty"`
+
+	// Limit Rows to return
+	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
 // RunQueryParams defines parameters for RunQuery.
 type RunQueryParams struct {
 	// Filter A filter in strata's query language; empty matches every image
@@ -579,6 +796,36 @@ type ResolveRefParams struct {
 	// Platform Platform to pick when the ref names a multi-platform index, such as linux/arm64
 	Platform *Platform `form:"platform,omitempty" json:"platform,omitempty"`
 }
+
+// SearchParams defines parameters for Search.
+type SearchParams struct {
+	// Filter A filter in strata's query language; empty matches every image
+	Filter *Filter `form:"filter,omitempty" json:"filter,omitempty"`
+
+	// Team Selected label.team values
+	Team *[]string `form:"team,omitempty" json:"team,omitempty"`
+
+	// Root Selected root bases
+	Root *[]string `form:"root,omitempty" json:"root,omitempty"`
+
+	// Verdict Selected verdicts
+	Verdict *[]string `form:"verdict,omitempty" json:"verdict,omitempty"`
+
+	// Platform Selected platforms
+	Platform *[]string `form:"platform,omitempty" json:"platform,omitempty"`
+
+	// Age Selected age buckets
+	Age *[]SearchParamsAge `form:"age,omitempty" json:"age,omitempty"`
+
+	// Offset Rows to skip
+	Offset *Offset `form:"offset,omitempty" json:"offset,omitempty"`
+
+	// Limit Rows to return
+	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// SearchParamsAge defines parameters for Search.
+type SearchParamsAge string
 
 // GetStaleParams defines parameters for GetStale.
 type GetStaleParams struct {

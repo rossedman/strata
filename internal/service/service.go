@@ -34,12 +34,29 @@ type Service struct {
 	Synonyms map[string]string
 	// Platform is the default platform when a ref names an index.
 	Platform string
-	Now      func() time.Time
+	// facts is whether the materialized image_facts table exists.
+	facts bool
+	Now   func() time.Time
 }
 
 // New returns a service over an open store with the default policy.
 func New(st *store.Store) *Service {
-	return &Service{Store: st, Policy: stale.DefaultPolicy(), Platform: "linux/amd64", Now: time.Now}
+	s := &Service{Store: st, Policy: stale.DefaultPolicy(), Platform: "linux/amd64", Now: time.Now}
+	var n int
+	if err := st.DB().QueryRow(`SELECT count(*) FROM information_schema.tables WHERE table_name = 'image_facts'`).Scan(&n); err == nil {
+		s.facts = n > 0
+	}
+	return s
+}
+
+// view returns the table queries read image rows from: image_facts, the
+// materialized copy refresh writes, when it exists, else the image_view it
+// is built from.
+func (s *Service) view() string {
+	if s.facts {
+		return "image_facts"
+	}
+	return "image_view"
 }
 
 // db returns the database handle.
@@ -79,6 +96,12 @@ func (s *Service) Refresh(ctx context.Context) error {
 	if err := stale.Recompute(ctx, s.db(), s.Policy, s.Now()); err != nil {
 		return err
 	}
+	if err := s.subtreeStats(ctx); err != nil {
+		return err
+	}
+	if err := s.materializeFacts(ctx); err != nil {
+		return err
+	}
 	return s.Snapshot(ctx)
 }
 
@@ -100,7 +123,7 @@ func (s *Service) Resolve(ctx context.Context, ref, platform string) (string, er
 		platform = s.Platform
 	}
 	rows, err := s.db().QueryContext(ctx, `
-		SELECT digest, platform FROM image_view WHERE list_contains(?, digest) ORDER BY platform, digest`, digests)
+		SELECT digest, platform FROM `+s.view()+` WHERE list_contains(?, digest) ORDER BY platform, digest`, digests)
 	if err != nil {
 		return "", err
 	}
@@ -211,4 +234,20 @@ func toStrings(v any) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// materializeFacts writes image_view into the image_facts table, so the
+// UI, queries and reports scan one columnar table instead of re-joining
+// refs, tags, lineage, staleness and referrers for every image.
+func (s *Service) materializeFacts(ctx context.Context) error {
+	for _, q := range []string{
+		`CREATE OR REPLACE TABLE image_facts AS SELECT * FROM image_view`,
+		`CREATE INDEX IF NOT EXISTS image_facts_digest ON image_facts (digest)`,
+	} {
+		if _, err := s.db().ExecContext(ctx, q); err != nil {
+			return fmt.Errorf("materialize image facts: %w", err)
+		}
+	}
+	s.facts = true
+	return nil
 }

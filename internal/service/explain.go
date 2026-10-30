@@ -139,7 +139,7 @@ func (s *Service) imageInfo(ctx context.Context, digest string, im *ImageInfo) e
 			top_chain_id, external, coalesce(labels::JSON::VARCHAR, '{}'), tag_refs,
 			coalesce(config_user, ''), config_entrypoint, config_cmd, config_ports, config_env_keys,
 			coalesce(config_workdir, ''), coalesce(config_stop_signal, ''), coalesce(config_healthcheck, false)
-		FROM image_view WHERE digest = ?`, digest).Scan(
+		FROM `+s.view()+` WHERE digest = ?`, digest).Scan(
 		&im.Digest, &im.Repo, &index, &im.Platform, &created, &age, &im.Size, &im.LayerCount,
 		&top, &im.External, &labels, &tags,
 		&im.Config.User, &entry, &cmd, &ports, &envKeys,
@@ -350,7 +350,7 @@ func (s *Service) referrers(ctx context.Context, digest, index string) ([]model.
 // running as root, shell-wrapper entrypoints, a missing healthcheck and
 // lineage conflicts.
 func findings(ex *Explanation) []string {
-	var out []string
+	out := []string{}
 	for _, k := range ex.Image.Config.EnvKeys {
 		for _, g := range secretKeyGlobs {
 			if ok, _ := path.Match(g, strings.ToUpper(k)); ok {

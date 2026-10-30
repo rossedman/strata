@@ -49,7 +49,7 @@ func (s *Service) Query(ctx context.Context, opts QueryOptions) (*Table, error) 
 // QueryEach runs a filter and streams rows to emit, so a full-registry
 // export never buffers. header is called once with the column names.
 func (s *Service) QueryEach(ctx context.Context, opts QueryOptions, header func([]string) error, emit func([]any) error) error {
-	sqlText, args, cols, err := buildQuery(opts)
+	sqlText, args, cols, err := buildQuery(opts, s.view())
 	if err != nil {
 		return input(err)
 	}
@@ -104,8 +104,9 @@ func normalize(v any) any {
 	return v
 }
 
-// buildQuery compiles query options to SQL, arguments and column names.
-func buildQuery(opts QueryOptions) (string, []any, []string, error) {
+// buildQuery compiles query options to SQL over view, with arguments
+// and column names.
+func buildQuery(opts QueryOptions, view string) (string, []any, []string, error) {
 	c, err := query.Compile(opts.Filter)
 	if err != nil {
 		return "", nil, nil, err
@@ -119,8 +120,8 @@ func buildQuery(opts QueryOptions) (string, []any, []string, error) {
 		if query.IsList(opts.GroupBy) {
 			inner = "unnest(" + expr + ")"
 		}
-		q := fmt.Sprintf(`SELECT g AS %s, count(*) AS images FROM (SELECT %s AS g FROM image_view WHERE %s) GROUP BY ALL ORDER BY images DESC, g NULLS LAST`,
-			ident(opts.GroupBy), inner, c.Where)
+		q := fmt.Sprintf(`SELECT g AS %s, count(*) AS images FROM (SELECT %s AS g FROM %s WHERE %s) GROUP BY ALL ORDER BY images DESC, g NULLS LAST`,
+			ident(opts.GroupBy), inner, view, c.Where)
 		if opts.Limit > 0 {
 			q += fmt.Sprintf(" LIMIT %d", opts.Limit)
 		}
@@ -151,7 +152,7 @@ func buildQuery(opts QueryOptions) (string, []any, []string, error) {
 		order = append(order, expr+" "+dir+" NULLS LAST")
 	}
 	order = append(order, "repo", "digest")
-	q := "SELECT " + strings.Join(sel, ", ") + " FROM image_view WHERE " + c.Where + " ORDER BY " + strings.Join(order, ", ")
+	q := "SELECT " + strings.Join(sel, ", ") + " FROM " + view + " WHERE " + c.Where + " ORDER BY " + strings.Join(order, ", ")
 	if opts.Limit > 0 {
 		q += fmt.Sprintf(" LIMIT %d", opts.Limit)
 	}
@@ -170,8 +171,10 @@ func groupExpr(field string) (string, error) {
 	case "":
 		return "'all'", nil
 	case "root":
-		// The root's first tag ref, or its digest for an untagged root.
-		return "coalesce(list_sort(list_filter(root_refs, lambda x: x NOT LIKE '%@%' AND x NOT LIKE 'sha256:%' AND x NOT LIKE 'phantom:%'))[1], root, digest)", nil
+		// The root's first tag ref, else repo@digest for an untagged root,
+		// else the bare id (a phantom ancestor).
+		return "coalesce(list_sort(list_filter(root_refs, lambda x: x NOT LIKE '%@%' AND x NOT LIKE 'sha256:%' AND x NOT LIKE 'phantom:%'))[1], " +
+			"list_filter(root_refs, lambda x: x LIKE '%@sha256:%')[1], root, digest)", nil
 	}
 	if query.IsList(field) {
 		return "", fmt.Errorf("cannot group by %s: it has several values per image", field)
@@ -195,7 +198,7 @@ func (s *Service) Stale(ctx context.Context, groupBy string) (*Table, error) {
 			count(*) FILTER (WHERE stale = 'stale') AS stale,
 			count(*) FILTER (WHERE stale = 'abandoned') AS abandoned,
 			round(100.0 * count(*) FILTER (WHERE stale IN ('stale', 'abandoned')) / count(*), 1) AS stale_pct
-		FROM image_view GROUP BY ALL ORDER BY stale_pct DESC, images DESC, grp NULLS LAST`
+		FROM ` + s.view() + ` GROUP BY ALL ORDER BY stale_pct DESC, images DESC, grp NULLS LAST`
 	t := &Table{Columns: []string{label, "images", "fresh", "drifting", "stale", "abandoned", "stale_pct"}, Rows: [][]any{}}
 	err = s.each(ctx, q, nil, len(t.Columns), func(r []any) error {
 		t.Rows = append(t.Rows, r)

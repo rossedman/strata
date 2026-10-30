@@ -33,7 +33,8 @@ strata stale --group-by label.team               # where are the stale images?
 strata explain reg.example.com/payments/api:1.8.2
 strata descendants reg.example.com/base/go:1.22 --all-versions --depth 0
 strata query 'label.team = "payments" and age > 180d and not has:sbom'
-strata serve                                      # JSON API and MCP on 127.0.0.1:7878
+strata ui                                         # the web UI on 127.0.0.1:7878
+strata serve                                      # web UI, JSON API and MCP for a team
 ```
 
 No registry handy? `go run ./examples/demo-registry` starts one seeded with realistic images; the [getting-started guide](https://rossedman.github.io/strata/getting-started/) walks through it.

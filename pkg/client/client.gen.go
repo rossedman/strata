@@ -39,22 +39,22 @@ func (e BaseVersionConfidence) Valid() bool {
 
 // Defines values for BaseVersionSource.
 const (
-	File       BaseVersionSource = "file"
-	Repo       BaseVersionSource = "repo"
-	Tag        BaseVersionSource = "tag"
-	TagHistory BaseVersionSource = "tag_history"
+	BaseVersionSourceFile       BaseVersionSource = "file"
+	BaseVersionSourceRepo       BaseVersionSource = "repo"
+	BaseVersionSourceTag        BaseVersionSource = "tag"
+	BaseVersionSourceTagHistory BaseVersionSource = "tag_history"
 )
 
 // Valid indicates whether the value is a known member of the BaseVersionSource enum.
 func (e BaseVersionSource) Valid() bool {
 	switch e {
-	case File:
+	case BaseVersionSourceFile:
 		return true
-	case Repo:
+	case BaseVersionSourceRepo:
 		return true
-	case Tag:
+	case BaseVersionSourceTag:
 		return true
-	case TagHistory:
+	case BaseVersionSourceTagHistory:
 		return true
 	default:
 		return false
@@ -168,25 +168,55 @@ func (e LineageInfoStatus) Valid() bool {
 
 // Defines values for NodeKind.
 const (
-	Collapsed NodeKind = "collapsed"
-	External  NodeKind = "external"
-	Image     NodeKind = "image"
-	Overflow  NodeKind = "overflow"
-	Phantom   NodeKind = "phantom"
+	NodeKindCollapsed NodeKind = "collapsed"
+	NodeKindExternal  NodeKind = "external"
+	NodeKindImage     NodeKind = "image"
+	NodeKindOverflow  NodeKind = "overflow"
+	NodeKindPhantom   NodeKind = "phantom"
 )
 
 // Valid indicates whether the value is a known member of the NodeKind enum.
 func (e NodeKind) Valid() bool {
 	switch e {
-	case Collapsed:
+	case NodeKindCollapsed:
 		return true
-	case External:
+	case NodeKindExternal:
 		return true
-	case Image:
+	case NodeKindImage:
 		return true
-	case Overflow:
+	case NodeKindOverflow:
 		return true
-	case Phantom:
+	case NodeKindPhantom:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OutlineRowKind.
+const (
+	OutlineRowKindBase     OutlineRowKind = "base"
+	OutlineRowKindExternal OutlineRowKind = "external"
+	OutlineRowKindImage    OutlineRowKind = "image"
+	OutlineRowKindPhantom  OutlineRowKind = "phantom"
+	OutlineRowKindRepo     OutlineRowKind = "repo"
+	OutlineRowKindUnrooted OutlineRowKind = "unrooted"
+)
+
+// Valid indicates whether the value is a known member of the OutlineRowKind enum.
+func (e OutlineRowKind) Valid() bool {
+	switch e {
+	case OutlineRowKindBase:
+		return true
+	case OutlineRowKindExternal:
+		return true
+	case OutlineRowKindImage:
+		return true
+	case OutlineRowKindPhantom:
+		return true
+	case OutlineRowKindRepo:
+		return true
+	case OutlineRowKindUnrooted:
 		return true
 	default:
 		return false
@@ -244,6 +274,33 @@ func (e Verdict) Valid() bool {
 	}
 }
 
+// Defines values for SearchParamsAge.
+const (
+	SearchParamsAgeGreaterThan1Year SearchParamsAge = "> 1 year"
+	SearchParamsAgeLessThan30Days   SearchParamsAge = "< 30 days"
+	SearchParamsAgeN180Days1Year    SearchParamsAge = "180 days–1 year"
+	SearchParamsAgeN30180Days       SearchParamsAge = "30–180 days"
+	SearchParamsAgeUnknown          SearchParamsAge = "unknown"
+)
+
+// Valid indicates whether the value is a known member of the SearchParamsAge enum.
+func (e SearchParamsAge) Valid() bool {
+	switch e {
+	case SearchParamsAgeGreaterThan1Year:
+		return true
+	case SearchParamsAgeLessThan30Days:
+		return true
+	case SearchParamsAgeN180Days1Year:
+		return true
+	case SearchParamsAgeN30180Days:
+		return true
+	case SearchParamsAgeUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
 // BaseVersion One digest a base tag has held, and how much is built on it
 type BaseVersion struct {
 	Children    int                   `json:"children"`
@@ -260,6 +317,15 @@ type BaseVersionConfidence string
 
 // BaseVersionSource defines model for BaseVersion.Source.
 type BaseVersionSource string
+
+// Change One line of a diff between snapshots
+type Change struct {
+	From   float32 `json:"from"`
+	Group  string  `json:"group"`
+	Kind   string  `json:"kind"`
+	Metric *string `json:"metric,omitempty"`
+	To     float32 `json:"to"`
+}
 
 // ConfigInfo Run-time fields from the image config; environment values are never stored except allowlisted ones
 type ConfigInfo struct {
@@ -317,6 +383,21 @@ type Explanation struct {
 
 	// Staleness A staleness verdict with the reasons behind it
 	Staleness StalenessInfo `json:"staleness"`
+}
+
+// Facet A field the search can be narrowed by
+type Facet struct {
+	// Field The query-language field the facet filters
+	Field  string       `json:"field"`
+	Name   string       `json:"name"`
+	Values []FacetValue `json:"values"`
+}
+
+// FacetValue One value of a facet and how many images have it
+type FacetValue struct {
+	Count    int64  `json:"count"`
+	Selected bool   `json:"selected"`
+	Value    string `json:"value"`
 }
 
 // Graph A lineage graph: an ancestry chain, a descendant tree, a query graph or the registry map
@@ -439,6 +520,69 @@ type Node struct {
 // NodeKind defines model for Node.Kind.
 type NodeKind string
 
+// Outline Children of an outline row
+type Outline struct {
+	Offset int          `json:"offset"`
+	Parent *string      `json:"parent,omitempty"`
+	Rows   []OutlineRow `json:"rows"`
+
+	// Total Rows at this level before paging
+	Total int64 `json:"total"`
+}
+
+// OutlineRow One row of the lineage outline: a base, a repo group or an image
+type OutlineRow struct {
+	Depth  int     `json:"depth"`
+	Digest *string `json:"digest,omitempty"`
+
+	// Drift Generations the row's base is behind its tag; for repo rows, the most among its images
+	Drift       *int `json:"drift,omitempty"`
+	HasChildren bool `json:"has_children"`
+
+	// Id Row id; pass it as parent to expand the row
+	Id string `json:"id"`
+
+	// Images Images in this row's subtree, itself included
+	Images int64          `json:"images"`
+	Kind   OutlineRowKind `json:"kind"`
+	Name   string         `json:"name"`
+
+	// Newest Creation time of the newest image in the subtree
+	Newest *time.Time `json:"newest,omitempty"`
+	Parent *string    `json:"parent,omitempty"`
+	Repo   *string    `json:"repo,omitempty"`
+	Tags   *[]string  `json:"tags,omitempty"`
+	Team   *string    `json:"team,omitempty"`
+
+	// Verdict A staleness verdict; empty when not computed yet
+	Verdict *Verdict `json:"verdict,omitempty"`
+
+	// Verdicts Images per verdict
+	Verdicts VerdictCounts `json:"verdicts"`
+}
+
+// OutlineRowKind defines model for OutlineRow.Kind.
+type OutlineRowKind string
+
+// Overview Headline numbers for the web UI
+type Overview struct {
+	ApparentBytes int64    `json:"apparent_bytes"`
+	Changes       []Change `json:"changes"`
+	DedupBytes    int64    `json:"dedup_bytes"`
+
+	// Host The registry host every image shares, if there is one
+	Host      *string    `json:"host,omitempty"`
+	Images    int64      `json:"images"`
+	IndexedAt *time.Time `json:"indexed_at,omitempty"`
+	Repos     int64      `json:"repos"`
+	Roots     []RootStat `json:"roots"`
+	Stacks    int64      `json:"stacks"`
+	Tags      int64      `json:"tags"`
+
+	// Verdicts Images per verdict
+	Verdicts VerdictCounts `json:"verdicts"`
+}
+
 // Referrer An artifact attached to an image, such as an SBOM or a signature
 type Referrer struct {
 	ArtifactType string       `json:"artifact_type"`
@@ -464,6 +608,44 @@ type Root struct {
 	Kind        string  `json:"kind"`
 	Label       string  `json:"label"`
 	StalePct    float32 `json:"stale_pct"`
+}
+
+// RootStat A root base and the stale images built on it
+type RootStat struct {
+	Id     string `json:"id"`
+	Images int64  `json:"images"`
+	Kind   string `json:"kind"`
+	Name   string `json:"name"`
+
+	// Verdicts Images per verdict
+	Verdicts VerdictCounts `json:"verdicts"`
+}
+
+// SearchHit One image in search results
+type SearchHit struct {
+	AgeDays  *int     `json:"age_days,omitempty"`
+	Digest   string   `json:"digest"`
+	Name     string   `json:"name"`
+	Platform string   `json:"platform"`
+	Repo     string   `json:"repo"`
+	Root     *string  `json:"root,omitempty"`
+	Size     int64    `json:"size"`
+	Tags     []string `json:"tags"`
+	Team     *string  `json:"team,omitempty"`
+
+	// Verdict A staleness verdict; empty when not computed yet
+	Verdict Verdict `json:"verdict"`
+}
+
+// SearchResult A page of search hits with facet counts
+type SearchResult struct {
+	Facets []Facet `json:"facets"`
+
+	// Filter The filter with every facet selection folded in, as strata query takes it
+	Filter string      `json:"filter"`
+	Hits   []SearchHit `json:"hits"`
+	Offset int         `json:"offset"`
+	Total  int64       `json:"total"`
 }
 
 // StalenessInfo A staleness verdict with the reasons behind it
@@ -499,6 +681,14 @@ type Table struct {
 // Verdict A staleness verdict; empty when not computed yet
 type Verdict string
 
+// VerdictCounts Images per verdict
+type VerdictCounts struct {
+	Abandoned int64 `json:"abandoned"`
+	Drifting  int64 `json:"drifting"`
+	Fresh     int64 `json:"fresh"`
+	Stale     int64 `json:"stale"`
+}
+
 // Budget defines model for Budget.
 type Budget = int
 
@@ -507,6 +697,12 @@ type Filter = string
 
 // GroupBy defines model for GroupBy.
 type GroupBy = string
+
+// Limit defines model for Limit.
+type Limit = int
+
+// Offset defines model for Offset.
+type Offset = int
 
 // Platform defines model for Platform.
 type Platform = string
@@ -553,6 +749,27 @@ type GetImageParams struct {
 	History *bool `form:"history,omitempty" json:"history,omitempty"`
 }
 
+// GetMapParams defines parameters for GetMap.
+type GetMapParams struct {
+	// Depth Levels below the roots
+	Depth *int `form:"depth,omitempty" json:"depth,omitempty"`
+}
+
+// GetOutlineParams defines parameters for GetOutline.
+type GetOutlineParams struct {
+	// Parent Outline row id to expand; empty for the roots
+	Parent *string `form:"parent,omitempty" json:"parent,omitempty"`
+
+	// OnlyStale Only rows holding stale or abandoned images
+	OnlyStale *bool `form:"only_stale,omitempty" json:"only_stale,omitempty"`
+
+	// Offset Rows to skip
+	Offset *Offset `form:"offset,omitempty" json:"offset,omitempty"`
+
+	// Limit Rows to return
+	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
 // RunQueryParams defines parameters for RunQuery.
 type RunQueryParams struct {
 	// Filter A filter in strata's query language; empty matches every image
@@ -588,6 +805,36 @@ type ResolveRefParams struct {
 	// Platform Platform to pick when the ref names a multi-platform index, such as linux/arm64
 	Platform *Platform `form:"platform,omitempty" json:"platform,omitempty"`
 }
+
+// SearchParams defines parameters for Search.
+type SearchParams struct {
+	// Filter A filter in strata's query language; empty matches every image
+	Filter *Filter `form:"filter,omitempty" json:"filter,omitempty"`
+
+	// Team Selected label.team values
+	Team *[]string `form:"team,omitempty" json:"team,omitempty"`
+
+	// Root Selected root bases
+	Root *[]string `form:"root,omitempty" json:"root,omitempty"`
+
+	// Verdict Selected verdicts
+	Verdict *[]string `form:"verdict,omitempty" json:"verdict,omitempty"`
+
+	// Platform Selected platforms
+	Platform *[]string `form:"platform,omitempty" json:"platform,omitempty"`
+
+	// Age Selected age buckets
+	Age *[]SearchParamsAge `form:"age,omitempty" json:"age,omitempty"`
+
+	// Offset Rows to skip
+	Offset *Offset `form:"offset,omitempty" json:"offset,omitempty"`
+
+	// Limit Rows to return
+	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// SearchParamsAge defines parameters for Search.
+type SearchParamsAge string
 
 // GetStaleParams defines parameters for GetStale.
 type GetStaleParams struct {
@@ -697,6 +944,29 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/images/{digest} (the `GetImage` operationId).
 	GetImage(ctx context.Context, digest string, params *GetImageParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetMap Aggregated registry map
+	//
+	// Root bases and up to three levels below them, leaf images grouped by repo, capped to stay drawable at any registry size.
+	//
+	// Corresponds with GET /v1/map (the `GetMap` operationId).
+	GetMap(ctx context.Context, params *GetMapParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetOutline One level of the lineage outline
+	//
+	// Children of an outline node. With no parent, the root bases. Children
+	// with descendants come back as base rows; leaf images are grouped into
+	// one row per repo, and a repo row's children are its images, paged.
+	//
+	// Corresponds with GET /v1/outline (the `GetOutline` operationId).
+	GetOutline(ctx context.Context, params *GetOutlineParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetOverview Registry overview for the web UI
+	//
+	// Headline counts, the staleness mix, the root bases holding the most stale images, and changes in the last week.
+	//
+	// Corresponds with GET /v1/overview (the `GetOverview` operationId).
+	GetOverview(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// RunQuery Filter images with the query language
 	//
 	// Corresponds with GET /v1/query (the `RunQuery` operationId).
@@ -716,6 +986,15 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /v1/roots (the `GetRoots` operationId).
 	GetRoots(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// Search Filter images with facet counts
+	//
+	// Runs a filter, applies the selected facet values, and returns one page
+	// of images plus counts for every facet. Each facet's counts apply every
+	// selection except its own, so choosing a value never hides the others.
+	//
+	// Corresponds with GET /v1/search (the `Search` operationId).
+	Search(ctx context.Context, params *SearchParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetStale Report the staleness mix
 	//
@@ -790,6 +1069,59 @@ func (c *Client) GetImage(ctx context.Context, digest string, params *GetImagePa
 	return c.Client.Do(req)
 }
 
+// GetMap Aggregated registry map
+//
+// Root bases and up to three levels below them, leaf images grouped by repo, capped to stay drawable at any registry size.
+//
+// Corresponds with GET /v1/map (the `GetMap` operationId).
+func (c *Client) GetMap(ctx context.Context, params *GetMapParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetMapRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetOutline One level of the lineage outline
+//
+// Children of an outline node. With no parent, the root bases. Children
+// with descendants come back as base rows; leaf images are grouped into
+// one row per repo, and a repo row's children are its images, paged.
+//
+// Corresponds with GET /v1/outline (the `GetOutline` operationId).
+func (c *Client) GetOutline(ctx context.Context, params *GetOutlineParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetOutlineRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetOverview Registry overview for the web UI
+//
+// Headline counts, the staleness mix, the root bases holding the most stale images, and changes in the last week.
+//
+// Corresponds with GET /v1/overview (the `GetOverview` operationId).
+func (c *Client) GetOverview(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetOverviewRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // RunQuery Filter images with the query language
 //
 // Corresponds with GET /v1/query (the `RunQuery` operationId).
@@ -840,6 +1172,25 @@ func (c *Client) ResolveRef(ctx context.Context, params *ResolveRefParams, reqEd
 // Corresponds with GET /v1/roots (the `GetRoots` operationId).
 func (c *Client) GetRoots(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetRootsRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// Search Filter images with facet counts
+//
+// Runs a filter, applies the selected facet values, and returns one page
+// of images plus counts for every facet. Each facet's counts apply every
+// selection except its own, so choosing a value never hides the others.
+//
+// Corresponds with GET /v1/search (the `Search` operationId).
+func (c *Client) Search(ctx context.Context, params *SearchParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSearchRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -1128,6 +1479,177 @@ func NewGetImageRequest(server string, digest string, params *GetImageParams) (*
 	return req, nil
 }
 
+// NewGetMapRequest constructs an http.Request for the GetMap method
+func NewGetMapRequest(server string, params *GetMapParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/map")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Depth != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "depth", *params.Depth, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetOutlineRequest constructs an http.Request for the GetOutline method
+func NewGetOutlineRequest(server string, params *GetOutlineParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/outline")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Parent != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "parent", *params.Parent, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.OnlyStale != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "only_stale", *params.OnlyStale, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Offset != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "offset", *params.Offset, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetOverviewRequest constructs an http.Request for the GetOverview method
+func NewGetOverviewRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/overview")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewRunQueryRequest constructs an http.Request for the RunQuery method
 func NewRunQueryRequest(server string, params *RunQueryParams) (*http.Request, error) {
 	var err error
@@ -1385,6 +1907,144 @@ func NewGetRootsRequest(server string) (*http.Request, error) {
 	return req, nil
 }
 
+// NewSearchRequest constructs an http.Request for the Search method
+func NewSearchRequest(server string, params *SearchParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/search")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Filter != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "filter", *params.Filter, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Team != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "team", *params.Team, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Root != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "root", *params.Root, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Verdict != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "verdict", *params.Verdict, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Platform != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "platform", *params.Platform, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Age != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "age", *params.Age, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Offset != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "offset", *params.Offset, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGetStaleRequest constructs an http.Request for the GetStale method
 func NewGetStaleRequest(server string, params *GetStaleParams) (*http.Request, error) {
 	var err error
@@ -1567,6 +2227,35 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/images/{digest} (the `GetImage` operationId).
 	GetImageWithResponse(ctx context.Context, digest string, params *GetImageParams, reqEditors ...RequestEditorFn) (*GetImageResponse, error)
 
+	// GetMapWithResponse Aggregated registry map
+	//
+	// Root bases and up to three levels below them, leaf images grouped by repo, capped to stay drawable at any registry size.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/map (the `GetMap` operationId).
+	GetMapWithResponse(ctx context.Context, params *GetMapParams, reqEditors ...RequestEditorFn) (*GetMapResponse, error)
+
+	// GetOutlineWithResponse One level of the lineage outline
+	//
+	// Children of an outline node. With no parent, the root bases. Children
+	// with descendants come back as base rows; leaf images are grouped into
+	// one row per repo, and a repo row's children are its images, paged.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/outline (the `GetOutline` operationId).
+	GetOutlineWithResponse(ctx context.Context, params *GetOutlineParams, reqEditors ...RequestEditorFn) (*GetOutlineResponse, error)
+
+	// GetOverviewWithResponse Registry overview for the web UI
+	//
+	// Headline counts, the staleness mix, the root bases holding the most stale images, and changes in the last week.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/overview (the `GetOverview` operationId).
+	GetOverviewWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetOverviewResponse, error)
+
 	// RunQueryWithResponse Filter images with the query language
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -1594,6 +2283,17 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /v1/roots (the `GetRoots` operationId).
 	GetRootsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetRootsResponse, error)
+
+	// SearchWithResponse Filter images with facet counts
+	//
+	// Runs a filter, applies the selected facet values, and returns one page
+	// of images plus counts for every facet. Each facet's counts apply every
+	// selection except its own, so choosing a value never hides the others.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/search (the `Search` operationId).
+	SearchWithResponse(ctx context.Context, params *SearchParams, reqEditors ...RequestEditorFn) (*SearchResponse, error)
 
 	// GetStaleWithResponse Report the staleness mix
 	//
@@ -1823,6 +2523,157 @@ func (r GetImageResponse) ContentType() string {
 	return ""
 }
 
+type GetMapResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *[]OutlineRow
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetMapResponse) GetJSON200() *[]OutlineRow {
+	return r.JSON200
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r GetMapResponse) GetJSONDefault() *Error {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetMapResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetMapResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetMapResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetMapResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetOutlineResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Outline
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetOutlineResponse) GetJSON200() *Outline {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetOutlineResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r GetOutlineResponse) GetJSONDefault() *Error {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetOutlineResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetOutlineResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetOutlineResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetOutlineResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetOverviewResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Overview
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetOverviewResponse) GetJSON200() *Overview {
+	return r.JSON200
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r GetOverviewResponse) GetJSONDefault() *Error {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetOverviewResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetOverviewResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetOverviewResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetOverviewResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type RunQueryResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -2036,6 +2887,61 @@ func (r GetRootsResponse) ContentType() string {
 	return ""
 }
 
+type SearchResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *SearchResult
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r SearchResponse) GetJSON200() *SearchResult {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r SearchResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r SearchResponse) GetJSONDefault() *Error {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r SearchResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SearchResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SearchResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SearchResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type GetStaleResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -2200,6 +3106,53 @@ func (c *ClientWithResponses) GetImageWithResponse(ctx context.Context, digest s
 	return ParseGetImageResponse(rsp)
 }
 
+// GetMapWithResponse Aggregated registry map
+//
+// Root bases and up to three levels below them, leaf images grouped by repo, capped to stay drawable at any registry size.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/map (the `GetMap` operationId).
+func (c *ClientWithResponses) GetMapWithResponse(ctx context.Context, params *GetMapParams, reqEditors ...RequestEditorFn) (*GetMapResponse, error) {
+	rsp, err := c.GetMap(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetMapResponse(rsp)
+}
+
+// GetOutlineWithResponse One level of the lineage outline
+//
+// Children of an outline node. With no parent, the root bases. Children
+// with descendants come back as base rows; leaf images are grouped into
+// one row per repo, and a repo row's children are its images, paged.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/outline (the `GetOutline` operationId).
+func (c *ClientWithResponses) GetOutlineWithResponse(ctx context.Context, params *GetOutlineParams, reqEditors ...RequestEditorFn) (*GetOutlineResponse, error) {
+	rsp, err := c.GetOutline(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetOutlineResponse(rsp)
+}
+
+// GetOverviewWithResponse Registry overview for the web UI
+//
+// Headline counts, the staleness mix, the root bases holding the most stale images, and changes in the last week.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/overview (the `GetOverview` operationId).
+func (c *ClientWithResponses) GetOverviewWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetOverviewResponse, error) {
+	rsp, err := c.GetOverview(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetOverviewResponse(rsp)
+}
+
 // RunQueryWithResponse Filter images with the query language
 //
 // Returns a wrapper object for the known response body format(s).
@@ -2250,6 +3203,23 @@ func (c *ClientWithResponses) GetRootsWithResponse(ctx context.Context, reqEdito
 		return nil, err
 	}
 	return ParseGetRootsResponse(rsp)
+}
+
+// SearchWithResponse Filter images with facet counts
+//
+// Runs a filter, applies the selected facet values, and returns one page
+// of images plus counts for every facet. Each facet's counts apply every
+// selection except its own, so choosing a value never hides the others.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/search (the `Search` operationId).
+func (c *ClientWithResponses) SearchWithResponse(ctx context.Context, params *SearchParams, reqEditors ...RequestEditorFn) (*SearchResponse, error) {
+	rsp, err := c.Search(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSearchResponse(rsp)
 }
 
 // GetStaleWithResponse Report the staleness mix
@@ -2431,6 +3401,112 @@ func ParseGetImageResponse(rsp *http.Response) (*GetImageResponse, error) {
 	return response, nil
 }
 
+// ParseGetMapResponse parses an HTTP response from a GetMapWithResponse call
+func ParseGetMapResponse(rsp *http.Response) (*GetMapResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetMapResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []OutlineRow
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetOutlineResponse parses an HTTP response from a GetOutlineWithResponse call
+func ParseGetOutlineResponse(rsp *http.Response) (*GetOutlineResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetOutlineResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Outline
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetOverviewResponse parses an HTTP response from a GetOverviewWithResponse call
+func ParseGetOverviewResponse(rsp *http.Response) (*GetOverviewResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetOverviewResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Overview
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseRunQueryResponse parses an HTTP response from a RunQueryWithResponse call
 func ParseRunQueryResponse(rsp *http.Response) (*RunQueryResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -2571,6 +3647,46 @@ func ParseGetRootsResponse(rsp *http.Response) (*GetRootsResponse, error) {
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseSearchResponse parses an HTTP response from a SearchWithResponse call
+func ParseSearchResponse(rsp *http.Response) (*SearchResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SearchResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SearchResult
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Error

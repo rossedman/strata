@@ -16,13 +16,14 @@ import (
 	"github.com/rossedman/strata/internal/cli"
 	"github.com/rossedman/strata/internal/mcpserver"
 	"github.com/rossedman/strata/internal/service"
+	"github.com/rossedman/strata/internal/web"
 )
 
 var serveCmd = &cobra.Command{
 	Use:   "serve",
-	Short: "Serve the HTTP API and an MCP endpoint over the index",
-	Long: `Serve the JSON API under /v1 (spec at /openapi.json) and an MCP server at /mcp from
-one process, which is the only one that opens the index for writing. With
+	Short: "Serve the web UI, the HTTP API and an MCP endpoint over the index",
+	Long: `Serve the web UI at /, the JSON API under /v1 (spec at /openapi.json) and an MCP
+server at /mcp from one process, which is the only one that opens the index for writing. With
 --reindex-every it also re-crawls the configured registries on a schedule, so the
 index stays current without webhooks. CLI commands find a running server and
 route through it instead of opening the locked index file.
@@ -64,7 +65,7 @@ read-only.`,
 		if err != nil {
 			return err
 		}
-		state.Logger.Info("serving", "api", "http://"+ln.Addr().String()+"/v1", "mcp", "http://"+ln.Addr().String()+"/mcp")
+		state.Logger.Info("serving", "ui", "http://"+ln.Addr().String()+"/", "api", "http://"+ln.Addr().String()+"/v1", "mcp", "http://"+ln.Addr().String()+"/mcp")
 		go func() {
 			<-ctx.Done()
 			shutdown, stop := context.WithTimeout(context.Background(), 10*time.Second)
@@ -111,6 +112,7 @@ func serveHandler(svc *service.Service, authHeader string) (http.Handler, error)
 	mux := http.NewServeMux()
 	mux.Handle("/v1/", apiHandler)
 	mux.Handle("/mcp", requireAuth(authHeader, mcpHandler))
+	mux.Handle("/", requireAuth(authHeader, web.Handler()))
 	mux.HandleFunc("GET /openapi.json", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(specJSON)
