@@ -44,7 +44,7 @@ func fill(page, title string, data any, vendor string) (string, error) {
 // Cytoscape.js with an ELK layout, opened offline in any browser.
 func HTMLTo(w io.Writer, g *graph.Graph) error {
 	title := "strata · " + g.Title
-	page, err := fill(graphPage, title, g, cytoscapeJS+"\n"+elkJS+"\n"+cytoscapeElkJS)
+	page, err := fill(graphPage, title, NewView(g), cytoscapeJS+"\n"+elkJS+"\n"+cytoscapeElkJS)
 	if err != nil {
 		return err
 	}
@@ -56,7 +56,7 @@ func HTMLTo(w io.Writer, g *graph.Graph) error {
 // left and descendants to the right, each block sized by image count and
 // shaded by its share of stale images.
 func MapTo(w io.Writer, g *graph.Graph) error {
-	page, err := fill(mapPage, "strata · registry map", g, "")
+	page, err := fill(mapPage, "strata · registry map", NewView(g), "")
 	if err != nil {
 		return err
 	}

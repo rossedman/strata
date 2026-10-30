@@ -81,21 +81,18 @@ func direction(g *graph.Graph) (childToParent bool, dir string) {
 }
 
 // nodeText is the two-line label used by diagram formats.
-func nodeText(n graph.Node) string {
-	switch n.Kind {
-	case graph.KindCollapsed, graph.KindOverflow:
-		return n.Label
-	}
-	d := graph.ShortDigest(strings.TrimPrefix(n.ID, "phantom:"))
+func nodeText(v View, n graph.Node) string {
+	d := v.Display[n.ID]
 	if n.Verdict != "" {
-		return n.Label + "\n" + d + " · " + n.Verdict
+		return d.Title + "\n" + d.Sub + " · " + n.Verdict
 	}
-	return n.Label + "\n" + d
+	return d.Title + "\n" + d.Sub
 }
 
 // MermaidTo writes a Mermaid flowchart, which GitHub renders inline.
 func MermaidTo(w io.Writer, g *graph.Graph) error {
 	id := ids(g)
+	v := NewView(g)
 	up, dir := direction(g)
 	mdir := map[string]string{"down": "TD", "right": "LR"}[dir]
 	var b strings.Builder
@@ -108,7 +105,7 @@ func MermaidTo(w io.Writer, g *graph.Graph) error {
 	b.WriteString("  classDef unknown fill:#D9D5EC,stroke:#2a2540,color:#1d1a2e\n")
 	b.WriteString("  classDef phantom fill:#ffffff,stroke:#8E8AA6,stroke-dasharray:4 3,color:#6B6880\n")
 	for _, n := range g.Nodes {
-		label := mermaidEscape(strings.ReplaceAll(nodeText(n), "\n", "<br/>"))
+		label := mermaidEscape(strings.ReplaceAll(nodeText(v, n), "\n", "<br/>"))
 		open, closing := "[\"", "\"]"
 		switch n.Kind {
 		case graph.KindExternal:
@@ -138,7 +135,11 @@ func MermaidTo(w io.Writer, g *graph.Graph) error {
 		if declared(e) {
 			arrow = "-.->"
 		}
-		fmt.Fprintf(&b, "  %s %s|%s| %s\n", from, arrow, e.Source, to)
+		if l := edgeLabel(e); l != "" {
+			fmt.Fprintf(&b, "  %s %s|%s| %s\n", from, arrow, mermaidEscape(l), to)
+		} else {
+			fmt.Fprintf(&b, "  %s %s %s\n", from, arrow, to)
+		}
 		if e.Conflict {
 			red = append(red, i)
 		}
@@ -158,6 +159,7 @@ func mermaidEscape(s string) string {
 // DotTo writes a Graphviz DOT graph.
 func DotTo(w io.Writer, g *graph.Graph) error {
 	id := ids(g)
+	v := NewView(g)
 	up, dir := direction(g)
 	var b strings.Builder
 	fmt.Fprintf(&b, "digraph strata {\n  rankdir=%s;\n", map[string]string{"down": "TB", "right": "LR"}[dir])
@@ -176,21 +178,28 @@ func DotTo(w io.Writer, g *graph.Graph) error {
 		case graph.KindOverflow:
 			shape = "note"
 		}
-		fmt.Fprintf(&b, "  %s [label=%s, shape=%s, style=%q, fillcolor=%q];\n", id[n.ID], dotQuote(nodeText(n)), shape, style, verdictFill[n.Verdict])
+		fmt.Fprintf(&b, "  %s [label=%s, shape=%s, style=%q, fillcolor=%q];\n", id[n.ID], dotQuote(nodeText(v, n)), shape, style, verdictFill[n.Verdict])
 	}
 	for _, e := range g.Edges {
 		from, to := id[e.Parent], id[e.Child]
 		if up {
 			from, to = to, from
 		}
-		attrs := []string{"label=" + dotQuote(e.Source)}
+		var attrs []string
+		if l := edgeLabel(e); l != "" {
+			attrs = append(attrs, "label="+dotQuote(l))
+		}
 		if declared(e) {
 			attrs = append(attrs, "style=dashed")
 		}
 		if e.Conflict {
 			attrs = append(attrs, `color="#C8243B"`, "penwidth=2")
 		}
-		fmt.Fprintf(&b, "  %s -> %s [%s];\n", from, to, strings.Join(attrs, ", "))
+		if len(attrs) == 0 {
+			fmt.Fprintf(&b, "  %s -> %s;\n", from, to)
+		} else {
+			fmt.Fprintf(&b, "  %s -> %s [%s];\n", from, to, strings.Join(attrs, ", "))
+		}
 	}
 	b.WriteString("}\n")
 	_, err := io.WriteString(w, b.String())
@@ -206,11 +215,12 @@ func dotQuote(s string) string {
 // D2Source returns the graph as D2 source text.
 func D2Source(g *graph.Graph) string {
 	id := ids(g)
+	v := NewView(g)
 	up, dir := direction(g)
 	var b strings.Builder
 	fmt.Fprintf(&b, "direction: %s\n", dir)
 	for _, n := range g.Nodes {
-		fmt.Fprintf(&b, "%s: %s {\n", id[n.ID], d2Quote(nodeText(n)))
+		fmt.Fprintf(&b, "%s: %s {\n", id[n.ID], d2Quote(nodeText(v, n)))
 		shape := "rectangle"
 		switch n.Kind {
 		case graph.KindExternal:
@@ -228,7 +238,7 @@ func D2Source(g *graph.Graph) string {
 		if n.Kind == graph.KindPhantom {
 			fill = "#FFFFFF"
 		}
-		fmt.Fprintf(&b, "  style.fill: %q\n  style.stroke: \"#2A2540\"\n  style.border-radius: 6\n", fill)
+		fmt.Fprintf(&b, "  style.fill: %q\n  style.stroke: \"#2A2540\"\n  style.border-radius: 8\n  style.font-color: \"#14111F\"\n  style.bold: false\n", fill)
 		if n.Matched {
 			b.WriteString("  style.stroke-width: 3\n  style.stroke: \"#5B47D6\"\n")
 		}
@@ -239,12 +249,17 @@ func D2Source(g *graph.Graph) string {
 		if up {
 			from, to = to, from
 		}
-		fmt.Fprintf(&b, "%s -> %s: %s {\n", from, to, d2Quote(e.Source))
+		if l := edgeLabel(e); l != "" {
+			fmt.Fprintf(&b, "%s -> %s: %s {\n", from, to, d2Quote(l))
+		} else {
+			fmt.Fprintf(&b, "%s -> %s {\n", from, to)
+		}
+		b.WriteString("  style.stroke: \"#6B6880\"\n  style.font-color: \"#6B6880\"\n")
 		if declared(e) {
 			b.WriteString("  style.stroke-dash: 5\n")
 		}
 		if e.Conflict {
-			b.WriteString("  style.stroke: \"#C8243B\"\n  style.stroke-width: 3\n")
+			b.WriteString("  style.stroke: \"#C8243B\"\n  style.font-color: \"#C8243B\"\n  style.stroke-width: 3\n")
 		}
 		b.WriteString("}\n")
 	}
