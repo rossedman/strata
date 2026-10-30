@@ -3,6 +3,7 @@ package crawl
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/rossedman/strata/internal/store"
 )
@@ -12,12 +13,17 @@ import (
 // images, so writing each repo on its own made the index the bottleneck
 // of a crawl. A repo is checkpointed in the transaction that stores the
 // last of its rows, so a resumed crawl re-crawls any repo whose rows were
-// still pending when the crawl stopped.
+// still pending when the crawl stopped. Pending rows are also written
+// every few seconds, so a server crawling in the background shows them
+// and a stopped crawl loses little.
 type writer struct {
 	st *store.Store
 	// size is how many images a merged batch holds before it is written.
 	size int
 	run  int64
+	// every is the longest rows wait before they are written.
+	every time.Duration
+	last  time.Time
 
 	mu      sync.Mutex
 	pending *store.Batch
@@ -28,7 +34,7 @@ type writer struct {
 
 // newWriter returns a writer for one crawl run.
 func newWriter(st *store.Store, run int64, size int) *writer {
-	w := &writer{st: st, run: run, size: size}
+	w := &writer{st: st, run: run, size: size, every: 5 * time.Second, last: time.Now()}
 	w.reset()
 	return w
 }
@@ -73,7 +79,7 @@ func (w *writer) add(ctx context.Context, b *store.Batch, repo string) error {
 		p.Done = append(p.Done, repo)
 	}
 	// Tags and pushes are small rows, so they get a larger allowance.
-	if len(p.Images) < w.size && len(p.Tags)+len(p.Pushes)+len(p.Events) < 20*w.size {
+	if len(p.Images) < w.size && len(p.Tags)+len(p.Pushes)+len(p.Events) < 20*w.size && time.Since(w.last) < w.every {
 		return nil
 	}
 	return w.flushLocked(ctx)
@@ -90,5 +96,6 @@ func (w *writer) flush(ctx context.Context) error {
 func (w *writer) flushLocked(ctx context.Context) error {
 	b := w.pending
 	w.reset()
+	w.last = time.Now()
 	return w.st.Write(ctx, b)
 }

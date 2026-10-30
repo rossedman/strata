@@ -70,19 +70,24 @@ type Options struct {
 	UserAgent string
 	// Logger receives progress.
 	Logger *slog.Logger
+	// Progress, when set, is called with the running totals after each
+	// repo finishes. Calls come from crawl workers, one at a time.
+	Progress func(Stats)
 	// Now returns the current time, for tests.
 	Now func() time.Time
 }
 
 // Stats summarize a crawl.
 type Stats struct {
-	Repos     int64 `json:"repos"`
-	Skipped   int64 `json:"repos_resumed"`
-	Tags      int64 `json:"tags"`
-	Images    int64 `json:"new_images"`
-	TagMoves  int64 `json:"tag_moves"`
-	Requests  int64 `json:"requests"`
-	Referrers int64 `json:"referrers"`
+	// ReposTotal is how many repos this crawl will visit, once known.
+	ReposTotal int64 `json:"repos_total"`
+	Repos      int64 `json:"repos"`
+	Skipped    int64 `json:"repos_resumed"`
+	Tags       int64 `json:"tags"`
+	Images     int64 `json:"new_images"`
+	TagMoves   int64 `json:"tag_moves"`
+	Requests   int64 `json:"requests"`
+	Referrers  int64 `json:"referrers"`
 	// Filtered counts what the filter skipped before fetching it.
 	ReposFiltered  int64 `json:"repos_filtered"`
 	TagsFiltered   int64 `json:"tags_filtered"`
@@ -129,7 +134,9 @@ type crawler struct {
 	red     *Redactor
 	match   *matcher
 	stats   Stats
-	sem     chan struct{}
+	// progressMu serializes Progress calls.
+	progressMu sync.Mutex
+	sem        chan struct{}
 	// configs caches parsed configs by digest so each is fetched once.
 	configs sync.Map
 	// w merges repo batches into large writes.
@@ -230,18 +237,24 @@ func (c *crawler) crawlRegistry(ctx context.Context) error {
 		}
 	}
 	c.w = newWriter(c.st, run, c.opts.BatchSize)
+	var todo []string
+	for _, r := range repos {
+		if !c.match.repo(r) {
+			atomic.AddInt64(&c.stats.ReposFiltered, 1)
+			continue
+		}
+		todo = append(todo, r)
+	}
+	atomic.StoreInt64(&c.stats.ReposTotal, int64(len(todo)))
+	c.progress()
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(c.opts.Workers)
-	for _, r := range repos {
+	for _, r := range todo {
 		repo, err := name.NewRepository(c.opts.Registry+"/"+r, c.nameOpt...)
 		if err != nil {
 			return fmt.Errorf("repo %q: %w", r, err)
 		}
 		full := RepoName(repo)
-		if !c.match.repo(r) {
-			atomic.AddInt64(&c.stats.ReposFiltered, 1)
-			continue
-		}
 		if done[full] {
 			atomic.AddInt64(&c.stats.Skipped, 1)
 			continue
@@ -251,6 +264,7 @@ func (c *crawler) crawlRegistry(ctx context.Context) error {
 				return fmt.Errorf("%s: %w", full, err)
 			}
 			atomic.AddInt64(&c.stats.Repos, 1)
+			c.progress()
 			return nil
 		})
 	}
@@ -261,6 +275,28 @@ func (c *crawler) crawlRegistry(ctx context.Context) error {
 		return err
 	}
 	return c.st.FinishCrawl(ctx, run)
+}
+
+// snapshot reads the running totals.
+func (c *crawler) snapshot() Stats {
+	s := &c.stats
+	return Stats{
+		ReposTotal: atomic.LoadInt64(&s.ReposTotal), Repos: atomic.LoadInt64(&s.Repos), Skipped: atomic.LoadInt64(&s.Skipped),
+		Tags: atomic.LoadInt64(&s.Tags), Images: atomic.LoadInt64(&s.Images), TagMoves: atomic.LoadInt64(&s.TagMoves),
+		Requests: atomic.LoadInt64(&s.Requests), Referrers: atomic.LoadInt64(&s.Referrers),
+		ReposFiltered: atomic.LoadInt64(&s.ReposFiltered), TagsFiltered: atomic.LoadInt64(&s.TagsFiltered),
+		ImagesFiltered: atomic.LoadInt64(&s.ImagesFiltered),
+	}
+}
+
+// progress reports the running totals, if anyone listens.
+func (c *crawler) progress() {
+	if c.opts.Progress == nil {
+		return
+	}
+	c.progressMu.Lock()
+	defer c.progressMu.Unlock()
+	c.opts.Progress(c.snapshot())
 }
 
 // catalog pages through the registry's _catalog endpoint.

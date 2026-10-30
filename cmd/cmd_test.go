@@ -342,7 +342,7 @@ func TestServeRuns(t *testing.T) {
 	case <-time.After(15 * time.Second):
 		t.Fatal("serve did not stop")
 	}
-	contains(t, out.String(), "serving", "re-crawled", "re-crawl failed")
+	contains(t, out.String(), "serving", "INFO  indexed", "index failed")
 }
 
 func TestMCPCommand(t *testing.T) {

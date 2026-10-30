@@ -26,6 +26,8 @@ repos it already finished. Re-crawls only list tags and compare digests, and eve
 tag move is recorded in tag history from the first crawl on.
 
 Registries come from --registry or from the registries list in the config file.
+Filter flags given without --registry replace those filters on every configured
+registry for this run.
 
 Filters skip work before it is requested: --include-repo and --exclude-repo
 before a repo's tags are listed, --include-tag and --exclude-tag before a tag is
@@ -54,6 +56,27 @@ times, and allows --pushed-since.`,
 				return err
 			}
 			regs = []config.Registry{r}
+		} else {
+			// Filter flags narrow the configured registries for this run.
+			regs = append([]config.Registry{}, regs...)
+			f := cmd.Flags()
+			for i := range regs {
+				r := &regs[i]
+				for flag, field := range map[string]*[]string{
+					"include-repo": &r.IncludeRepos, "exclude-repo": &r.ExcludeRepos,
+					"include-tag": &r.IncludeTags, "exclude-tag": &r.ExcludeTags, "platforms": &r.Platforms,
+				} {
+					if f.Changed(flag) {
+						*field = v.GetStringSlice(flag)
+					}
+				}
+				if f.Changed("pushed-since") {
+					r.PushedSince = v.GetString("pushed-since")
+				}
+				if err := r.Check(); err != nil {
+					return fmt.Errorf("%s: %w", r.Host, err)
+				}
+			}
 		}
 		external := append(append([]string{}, state.Config.External...), v.GetStringSlice("external")...)
 		if len(regs) == 0 && len(external) == 0 {

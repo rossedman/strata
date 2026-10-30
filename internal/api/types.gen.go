@@ -358,6 +358,27 @@ type ConfigInfo struct {
 	Workdir     string             `json:"workdir"`
 }
 
+// CrawlStats Running totals of a crawl
+type CrawlStats struct {
+	ImagesFiltered int64 `json:"images_filtered"`
+	NewImages      int64 `json:"new_images"`
+	Referrers      int64 `json:"referrers"`
+
+	// Repos Repos crawled so far
+	Repos         int64 `json:"repos"`
+	ReposFiltered int64 `json:"repos_filtered"`
+
+	// ReposResumed Repos an earlier run already finished
+	ReposResumed int64 `json:"repos_resumed"`
+
+	// ReposTotal Repos this crawl visits, once listed
+	ReposTotal   int64 `json:"repos_total"`
+	Requests     int64 `json:"requests"`
+	TagMoves     int64 `json:"tag_moves"`
+	Tags         int64 `json:"tags"`
+	TagsFiltered int64 `json:"tags_filtered"`
+}
+
 // DescendantResult A descendant graph and the base versions it starts from
 type DescendantResult struct {
 	// Graph A lineage graph: an ancestry chain, a descendant tree, a query graph or the registry map
@@ -490,6 +511,25 @@ type ImageInfo struct {
 	Size       int64      `json:"size"`
 	Tags       []string   `json:"tags"`
 	TopChainId string     `json:"top_chain_id"`
+}
+
+// IndexStatus State of the running or last index
+type IndexStatus struct {
+	// Crawl Running totals of a crawl
+	Crawl CrawlStats `json:"crawl"`
+
+	// Error Why the last index failed
+	Error      *string    `json:"error,omitempty"`
+	FinishedAt *time.Time `json:"finished_at,omitempty"`
+
+	// RefreshEverySeconds How often views refresh during a crawl; 0 means only at the end
+	RefreshEverySeconds int64 `json:"refresh_every_seconds"`
+
+	// RefreshedAt When lineage, staleness and the views were last recomputed
+	RefreshedAt *time.Time `json:"refreshed_at,omitempty"`
+	Registry    *string    `json:"registry,omitempty"`
+	Running     bool       `json:"running"`
+	StartedAt   *time.Time `json:"started_at,omitempty"`
 }
 
 // LayerInfo One layer and the build step that created it

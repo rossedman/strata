@@ -32,6 +32,7 @@ require (
 	charm.land/bubbles/v2 v2.0.0 // indirect
 	charm.land/bubbletea/v2 v2.0.2 // indirect
 	github.com/PuerkitoBio/goquery v1.10.0 // indirect
+	github.com/aclements/go-moremath v0.0.0-20210112150236-f10218a38794 // indirect
 	github.com/alecthomas/chroma/v2 v2.14.0 // indirect
 	github.com/andybalholm/brotli v1.2.0 // indirect
 	github.com/andybalholm/cascadia v1.3.2 // indirect
@@ -116,11 +117,12 @@ require (
 	go.duckdb.org/libduckdb/linux-amd64 v0.20000.0 // indirect
 	go.duckdb.org/libduckdb/linux-arm64 v0.20000.0 // indirect
 	go.duckdb.org/libduckdb/windows-amd64 v0.20000.0 // indirect
-	golang.org/x/exp v0.0.0-20260112195511-716be5621a96 // indirect
-	golang.org/x/image v0.20.0 // indirect
+	golang.org/x/exp v0.0.0-20261007192929-f45ad48fbe92 // indirect
+	golang.org/x/image v0.47.0 // indirect
 	golang.org/x/mod v0.41.0 // indirect
 	golang.org/x/net v0.62.0 // indirect
-	golang.org/x/oauth2 v0.36.0 // indirect
+	golang.org/x/oauth2 v0.37.0 // indirect
+	golang.org/x/perf v0.0.0-20261009192801-be2c69fb417e // indirect
 	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/telemetry v0.0.0-20260924152758-ed294f943157 // indirect
 	golang.org/x/text v0.43.0 // indirect
@@ -131,4 +133,7 @@ require (
 	oss.terrastruct.com/util-go v0.0.0-20250213174338-243d8661088a // indirect
 )
 
-tool github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen
+tool (
+	github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen
+	golang.org/x/perf/cmd/benchstat
+)
