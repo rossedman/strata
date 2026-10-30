@@ -127,11 +127,16 @@ type Batch struct {
 	// Pushes are push and pull times reported by the registry's API. They
 	// change between crawls, so they replace what was stored.
 	Pushes []model.Push
+	// Run and Done checkpoint repos of a crawl run in the same
+	// transaction as their data, so a resumed crawl never skips a repo
+	// whose rows were lost.
+	Run  int64
+	Done []string
 }
 
 // Len returns the number of records in the batch.
 func (b *Batch) Len() int {
-	return len(b.Images) + len(b.Index) + len(b.Tags) + len(b.DeleteTags) + len(b.Events) + len(b.Referrers) + len(b.Pushes)
+	return len(b.Images) + len(b.Index) + len(b.Tags) + len(b.DeleteTags) + len(b.Events) + len(b.Referrers) + len(b.Pushes) + len(b.Done)
 }
 
 // Write stores a batch in one transaction, bulk-loading through DuckDB's
@@ -163,6 +168,45 @@ func (s *Store) Write(ctx context.Context, b *Batch) error {
 	return nil
 }
 
+// ReplaceRows deletes with del and bulk-loads rows into table in one
+// transaction, through the appender rather than one statement per row.
+func (s *Store) ReplaceRows(ctx context.Context, del string, delArgs []any, table string, rows [][]any) error {
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("acquire connection: %w", err)
+	}
+	defer func() { _ = conn.Close() }()
+	if _, err := conn.ExecContext(ctx, "BEGIN TRANSACTION"); err != nil {
+		return fmt.Errorf("begin: %w", err)
+	}
+	_, err = conn.ExecContext(ctx, del, delArgs...)
+	if err == nil && len(rows) > 0 {
+		err = conn.Raw(func(dc any) error {
+			return appendTo(dc.(driver.Conn), table, "INSERT INTO "+table+" SELECT * FROM appended_data", func(a *duckdb.Appender) error {
+				vals := make([]driver.Value, 0, 8)
+				for _, r := range rows {
+					vals = vals[:0]
+					for _, v := range r {
+						vals = append(vals, v)
+					}
+					if err := a.AppendRow(vals...); err != nil {
+						return err
+					}
+				}
+				return nil
+			})
+		})
+	}
+	if err != nil {
+		_, _ = conn.ExecContext(ctx, "ROLLBACK")
+		return err
+	}
+	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	return nil
+}
+
 // deleteTags removes tags the registry no longer lists.
 func deleteTags(ctx context.Context, conn *sql.Conn, tags []model.Tag) error {
 	for _, t := range tags {
@@ -179,9 +223,12 @@ type rowsFunc func(a *duckdb.Appender) error
 // writeBatch appends every table's rows for a batch on one connection.
 func writeBatch(conn driver.Conn, b *Batch) error {
 	now := time.Now().UTC()
+	// n is how many source records feed each table; tables with none are
+	// skipped, since every appender costs a query even when empty.
 	steps := []struct {
 		table, query string
 		rows         rowsFunc
+		n            int
 	}{
 		{"images", "INSERT OR IGNORE INTO images SELECT * FROM appended_data", func(a *duckdb.Appender) error {
 			for _, img := range b.Images {
@@ -199,7 +246,7 @@ func writeBatch(conn driver.Conn, b *Batch) error {
 				}
 			}
 			return nil
-		}},
+		}, len(b.Images)},
 		{"image_prefixes", "INSERT OR IGNORE INTO image_prefixes SELECT * FROM appended_data", func(a *duckdb.Appender) error {
 			for _, img := range b.Images {
 				for d, id := range img.ChainIDs {
@@ -209,7 +256,7 @@ func writeBatch(conn driver.Conn, b *Batch) error {
 				}
 			}
 			return nil
-		}},
+		}, len(b.Images)},
 		{"layers", "INSERT OR IGNORE INTO layers SELECT DISTINCT * FROM appended_data", func(a *duckdb.Appender) error {
 			for _, img := range b.Images {
 				for _, l := range img.Layers {
@@ -219,7 +266,7 @@ func writeBatch(conn driver.Conn, b *Batch) error {
 				}
 			}
 			return nil
-		}},
+		}, len(b.Images)},
 		{"image_layers", "INSERT OR IGNORE INTO image_layers SELECT * FROM appended_data", func(a *duckdb.Appender) error {
 			for _, img := range b.Images {
 				for p, l := range img.Layers {
@@ -229,7 +276,7 @@ func writeBatch(conn driver.Conn, b *Batch) error {
 				}
 			}
 			return nil
-		}},
+		}, len(b.Images)},
 		{"image_history", "INSERT OR IGNORE INTO image_history SELECT * FROM appended_data", func(a *duckdb.Appender) error {
 			for _, img := range b.Images {
 				for p, h := range img.History {
@@ -239,7 +286,7 @@ func writeBatch(conn driver.Conn, b *Batch) error {
 				}
 			}
 			return nil
-		}},
+		}, len(b.Images)},
 		{"env_values", "INSERT OR IGNORE INTO env_values SELECT * FROM appended_data", func(a *duckdb.Appender) error {
 			for _, img := range b.Images {
 				for k, v := range img.Config.EnvValues {
@@ -249,7 +296,7 @@ func writeBatch(conn driver.Conn, b *Batch) error {
 				}
 			}
 			return nil
-		}},
+		}, len(b.Images)},
 		{"index_manifests", "INSERT OR IGNORE INTO index_manifests SELECT * FROM appended_data", func(a *duckdb.Appender) error {
 			for _, e := range b.Index {
 				if err := a.AppendRow(e.IndexDigest, e.Digest, e.Platform.OS, e.Platform.Arch, e.Platform.Variant); err != nil {
@@ -257,7 +304,7 @@ func writeBatch(conn driver.Conn, b *Batch) error {
 				}
 			}
 			return nil
-		}},
+		}, len(b.Index)},
 		{"tags", "INSERT OR REPLACE INTO tags SELECT * FROM appended_data", func(a *duckdb.Appender) error {
 			for _, t := range b.Tags {
 				if err := a.AppendRow(t.Repo, t.Tag, t.Digest, t.UpdatedAt); err != nil {
@@ -265,7 +312,7 @@ func writeBatch(conn driver.Conn, b *Batch) error {
 				}
 			}
 			return nil
-		}},
+		}, len(b.Tags)},
 		{"tag_history", "INSERT OR IGNORE INTO tag_history SELECT * FROM appended_data", func(a *duckdb.Appender) error {
 			for _, e := range b.Events {
 				if err := a.AppendRow(e.Repo, e.Tag, e.SeenAt, nullable(e.Digest), e.Source); err != nil {
@@ -273,7 +320,7 @@ func writeBatch(conn driver.Conn, b *Batch) error {
 				}
 			}
 			return nil
-		}},
+		}, len(b.Events)},
 		{"referrers", "INSERT OR IGNORE INTO referrers SELECT * FROM appended_data", func(a *duckdb.Appender) error {
 			for _, r := range b.Referrers {
 				if err := a.AppendRow(r.Subject, r.Digest, r.ArtifactType, r.Kind); err != nil {
@@ -281,7 +328,7 @@ func writeBatch(conn driver.Conn, b *Batch) error {
 				}
 			}
 			return nil
-		}},
+		}, len(b.Referrers)},
 		{"pushes", `INSERT OR REPLACE INTO pushes
 			SELECT col1, col2, min(col3), max(col4) FROM appended_data GROUP BY col1, col2`, func(a *duckdb.Appender) error {
 			for _, p := range b.Pushes {
@@ -290,7 +337,7 @@ func writeBatch(conn driver.Conn, b *Batch) error {
 				}
 			}
 			return nil
-		}},
+		}, len(b.Pushes)},
 		// A registry's last-pull time feeds the same pull signal as imported
 		// pull counts; the count is unknown.
 		{"pulls", `INSERT OR REPLACE INTO pulls
@@ -305,12 +352,26 @@ func writeBatch(conn driver.Conn, b *Batch) error {
 				}
 			}
 			return nil
-		}},
+		}, len(b.Pushes)},
+		{"crawl_repos", "INSERT OR REPLACE INTO crawl_repos SELECT * FROM appended_data", func(a *duckdb.Appender) error {
+			for _, repo := range b.Done {
+				if err := a.AppendRow(b.Run, repo, now); err != nil {
+					return err
+				}
+			}
+			return nil
+		}, len(b.Done)},
 	}
 	for _, st := range steps {
+		if st.n == 0 {
+			continue
+		}
 		if err := appendTo(conn, st.table, st.query, st.rows); err != nil {
 			return err
 		}
+	}
+	if len(b.Images) == 0 {
+		return nil
 	}
 	return appendLabels(conn, b.Images)
 }

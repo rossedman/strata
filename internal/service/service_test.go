@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -565,5 +566,22 @@ func BenchmarkResolve(b *testing.B) {
 		if _, err := svc.Resolve(ctx, ref, ""); err != nil {
 			b.Fatal(err)
 		}
+	}
+}
+
+// BenchmarkRefresh recomputes lineage, staleness and the materialized
+// views over a 50,000-image index, which is what every index run and every
+// refresh during a background crawl pays.
+func BenchmarkRefresh(b *testing.B) {
+	for _, n := range []int{10_000, 50_000} {
+		b.Run(fmt.Sprintf("images=%d", n), func(b *testing.B) {
+			svc := New(fixture.Open(b, fixture.Org(n)))
+			for b.Loop() {
+				if err := svc.Refresh(ctx); err != nil {
+					b.Fatal(err)
+				}
+			}
+			b.ReportMetric(float64(n)*float64(b.N)/b.Elapsed().Seconds(), "images/s")
+		})
 	}
 }
