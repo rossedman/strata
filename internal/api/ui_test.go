@@ -13,6 +13,10 @@ func TestUIEndpoints(t *testing.T) {
 	if err != nil || o.JSON200 == nil || o.JSON200.Images != 5 {
 		t.Fatalf("overview = %d %s", o.StatusCode(), o.Body)
 	}
+	status, err := c.GetStatusWithResponse(ctx)
+	if err != nil || status.JSON200 == nil || status.JSON200.Running {
+		t.Fatalf("status = %d %s", status.StatusCode(), status.Body)
+	}
 	roots, err := c.GetOutlineWithResponse(ctx, nil)
 	if err != nil || roots.JSON200 == nil || len(roots.JSON200.Rows) == 0 {
 		t.Fatalf("outline roots = %d %s", roots.StatusCode(), roots.Body)

@@ -9,6 +9,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	duckdb "github.com/duckdb/duckdb-go/v2"
@@ -65,11 +66,28 @@ type move struct {
 	lastMoveAt  time.Time
 }
 
+// byDigest maps each digest to the refs whose history holds it, so
+// looking up an image's tags does not scan every tag.
+func (h History) byDigest() map[string][]string {
+	idx := map[string][]string{}
+	for ref, events := range h {
+		seen := map[string]bool{}
+		for _, e := range events {
+			if e.Digest != "" && !seen[e.Digest] {
+				seen[e.Digest] = true
+				idx[e.Digest] = append(idx[e.Digest], ref)
+			}
+		}
+	}
+	return idx
+}
+
 // movesAway finds every tag that once pointed at one of digests, and how
 // it moved on since: the number of new digests it took, when it first
 // left and when it last moved. A tag that still points at the digest
-// reports zero generations. Deleted tags are skipped.
-func (h History) movesAway(digests ...string) []move {
+// reports zero generations. Deleted tags are skipped. idx, from byDigest,
+// narrows the tags looked at; nil looks at all of them.
+func (h History) movesAway(idx map[string][]string, digests ...string) []move {
 	held := func(d string) bool {
 		for _, x := range digests {
 			if x != "" && d == x {
@@ -78,8 +96,21 @@ func (h History) movesAway(digests ...string) []move {
 		}
 		return false
 	}
+	refs := map[string]bool{}
+	if idx == nil {
+		for ref := range h {
+			refs[ref] = true
+		}
+	} else {
+		for _, d := range digests {
+			for _, ref := range idx[d] {
+				refs[ref] = true
+			}
+		}
+	}
 	var out []move
-	for ref, events := range h {
+	for ref := range refs {
+		events := h[ref]
 		last := -1
 		for i, e := range events {
 			if held(e.Digest) {
@@ -119,15 +150,18 @@ func (h History) movesAway(digests ...string) []move {
 // approximating drift before tag history began.
 type RepoImages map[string][]time.Time
 
-// newerThan counts images in repo created after t.
+// newerThan counts images in repo created after t. Each repo's times
+// must be sorted, as sort leaves them.
 func (r RepoImages) newerThan(repo string, t time.Time) int {
-	n := 0
-	for _, c := range r[repo] {
-		if c.After(t) {
-			n++
-		}
+	times := r[repo]
+	return len(times) - sort.Search(len(times), func(i int) bool { return times[i].After(t) })
+}
+
+// sort orders each repo's creation times.
+func (r RepoImages) sort() {
+	for _, times := range r {
+		sort.Slice(times, func(i, j int) bool { return times[i].Before(times[j]) })
 	}
-	return n
 }
 
 // Result is a verdict with the signals behind it.
@@ -155,6 +189,17 @@ type Evaluator struct {
 	Now     time.Time
 	// HavePulls is whether any pull data exists in the index.
 	HavePulls bool
+
+	prepare sync.Once
+	byRef   map[string][]string
+}
+
+// ready indexes history and sorts repo times on first use.
+func (e *Evaluator) ready() {
+	e.prepare.Do(func() {
+		e.byRef = e.History.byDigest()
+		e.Repos.sort()
+	})
 }
 
 // days returns whole days from t to the evaluator's now.
@@ -164,6 +209,7 @@ func (e *Evaluator) days(t time.Time) int {
 
 // Evaluate computes the verdict and reasons for one image.
 func (e *Evaluator) Evaluate(f Facts) Result {
+	e.ready()
 	r := Result{Digest: f.Digest, Reasons: []string{}}
 	th := e.Policy.For(f.Repo, f.Labels)
 	e.baseDrift(f, &r)
@@ -223,7 +269,7 @@ func (e *Evaluator) baseDrift(f Facts, r *Result) {
 		// says anything about drift.
 		return
 	}
-	moves := e.History.movesAway(p.Digest, p.IndexDigest)
+	moves := e.History.movesAway(e.byRef, p.Digest, p.IndexDigest)
 	if len(moves) == 0 {
 		// No history covers the parent. If a newer image exists in the
 		// parent's repo, the parent was likely superseded.
@@ -263,7 +309,7 @@ func (e *Evaluator) baseDrift(f Facts, r *Result) {
 // newer one, using the longest-superseded tag.
 func (e *Evaluator) superseded(f Facts, r *Result) {
 	var worst *move
-	for _, m := range e.History.movesAway(f.Digest, f.IndexDigest) {
+	for _, m := range e.History.movesAway(e.byRef, f.Digest, f.IndexDigest) {
 		if m.generations == 0 {
 			continue
 		}

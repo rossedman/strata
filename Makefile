@@ -10,10 +10,14 @@ LDFLAGS   := -s -w -X $(PKG).Version=$(VERSION) -X $(PKG).Commit=$(COMMIT) -X $(
 COVERMIN  ?= 90
 FUZZTIME  ?= 30s
 BENCHOUT  ?= bench.txt
+BENCH     ?= .
+BASE      ?= main
+CRAWLBENCH := Crawl|Recrawl|Refresh|Write
+BENCHPKGS := ./internal/crawl ./internal/service ./internal/store
 DOCS      := uv run --no-project --with-requirements requirements-docs.txt mkdocs
 VACUUM    ?= vacuum
 
-.PHONY: build test cover bench fuzz lint fmt generate generate-check vuln docs docs-build docs-serve release-check check clean
+.PHONY: build test cover bench bench-compare fuzz lint fmt generate generate-check vuln docs docs-build docs-serve release-check check clean
 
 ## build: compile the strata binary (needs cgo for DuckDB)
 build:
@@ -31,9 +35,17 @@ cover:
 	@$(GO) tool cover -func=coverage.hand.out | tail -1
 	@$(GO) tool cover -func=coverage.hand.out | awk '/^total:/ {sub("%","",$$3); if ($$3+0 < $(COVERMIN)) {print "coverage " $$3 "% < $(COVERMIN)%"; exit 1}}'
 
-## bench: run benchmarks and save results for benchstat
+## bench: run benchmarks matching BENCH and save results for benchstat
 bench:
-	$(GO) test -run='^$$' -bench=. -benchmem -count=6 ./... | tee $(BENCHOUT)
+	$(GO) test -run='^$$' -bench='$(BENCH)' -benchmem -count=6 ./... | tee $(BENCHOUT)
+
+## bench-compare: benchmark the crawl and refresh against BASE (default main), as CI does
+bench-compare:
+	rm -rf .bench-base && git worktree add .bench-base $(BASE)
+	cd .bench-base && $(GO) test -run='^$$' -bench='$(CRAWLBENCH)' -benchmem -benchtime=3x -count=6 $(BENCHPKGS) > ../bench-base.txt || true
+	git worktree remove --force .bench-base
+	$(GO) test -run='^$$' -bench='$(CRAWLBENCH)' -benchmem -benchtime=3x -count=6 $(BENCHPKGS) > bench-pr.txt
+	$(GO) tool benchstat base=bench-base.txt pr=bench-pr.txt
 
 ## fuzz: run every fuzz target for $(FUZZTIME)
 fuzz:

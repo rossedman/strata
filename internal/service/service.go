@@ -9,8 +9,11 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/rossedman/strata/internal/crawl"
@@ -34,9 +37,27 @@ type Service struct {
 	Synonyms map[string]string
 	// Platform is the default platform when a ref names an index.
 	Platform string
-	// facts is whether the materialized image_facts table exists.
-	facts bool
+	// RefreshEvery is how often Index refreshes the views while a crawl
+	// runs; zero refreshes only when it finishes.
+	RefreshEvery time.Duration
+	// Logger receives background warnings; nil discards them.
+	Logger *slog.Logger
+	// facts is whether the materialized image_facts table exists. Request
+	// handlers read it while a background index writes it.
+	facts atomic.Bool
 	Now   func() time.Time
+
+	// refreshMu keeps refreshes from overlapping; st is the index status.
+	refreshMu sync.Mutex
+	st        status
+}
+
+// logger returns the service's logger, or one that discards.
+func (s *Service) logger() *slog.Logger {
+	if s.Logger == nil {
+		return slog.New(slog.DiscardHandler)
+	}
+	return s.Logger
 }
 
 // New returns a service over an open store with the default policy.
@@ -44,7 +65,7 @@ func New(st *store.Store) *Service {
 	s := &Service{Store: st, Policy: stale.DefaultPolicy(), Platform: "linux/amd64", Now: time.Now}
 	var n int
 	if err := st.DB().QueryRow(`SELECT count(*) FROM information_schema.tables WHERE table_name = 'image_facts'`).Scan(&n); err == nil {
-		s.facts = n > 0
+		s.facts.Store(n > 0)
 	}
 	return s
 }
@@ -53,7 +74,7 @@ func New(st *store.Store) *Service {
 // materialized copy refresh writes, when it exists, else the image_view it
 // is built from.
 func (s *Service) view() string {
-	if s.facts {
+	if s.facts.Load() {
 		return "image_facts"
 	}
 	return "image_view"
@@ -70,10 +91,39 @@ type IndexResult struct {
 }
 
 // Index crawls, then recomputes lineage, staleness and today's snapshot.
-func (s *Service) Index(ctx context.Context, opts crawl.Options) (IndexResult, error) {
+// Progress is visible through Status while it runs, and with RefreshEvery
+// set the views refresh during the crawl too.
+func (s *Service) Index(ctx context.Context, opts crawl.Options) (res IndexResult, err error) {
 	start := s.Now()
+	s.update(func(st *IndexStatus) {
+		*st = IndexStatus{Running: true, Registry: opts.Registry, StartedAt: &start, RefreshedAt: st.RefreshedAt}
+	})
+	defer func() {
+		end := s.Now()
+		s.update(func(st *IndexStatus) {
+			st.Running, st.FinishedAt, st.Crawl = false, &end, res.Crawl
+			if err != nil {
+				st.Error = err.Error()
+			}
+		})
+	}()
+	report := opts.Progress
+	opts.Progress = func(st crawl.Stats) {
+		s.update(func(is *IndexStatus) { is.Crawl = st })
+		if report != nil {
+			report(st)
+		}
+	}
+	stopRefresh := func() {}
+	if s.RefreshEvery > 0 {
+		during, stop := context.WithCancel(ctx)
+		var wg sync.WaitGroup
+		wg.Go(func() { s.refreshDuring(during) })
+		stopRefresh = func() { stop(); wg.Wait() }
+	}
 	stats, err := crawl.Crawl(ctx, s.Store, opts)
-	res := IndexResult{Crawl: stats}
+	stopRefresh()
+	res.Crawl = stats
 	if err != nil {
 		return res, err
 	}
@@ -90,6 +140,18 @@ func (s *Service) Index(ctx context.Context, opts crawl.Options) (IndexResult, e
 // Refresh recomputes the derived views: lineage, staleness and the daily
 // snapshot.
 func (s *Service) Refresh(ctx context.Context) error {
+	s.refreshMu.Lock()
+	defer s.refreshMu.Unlock()
+	if err := s.refresh(ctx); err != nil {
+		return err
+	}
+	now := s.Now()
+	s.update(func(st *IndexStatus) { st.RefreshedAt = &now })
+	return nil
+}
+
+// refresh does the work of Refresh; the caller holds refreshMu.
+func (s *Service) refresh(ctx context.Context) error {
 	if err := lineage.Recompute(ctx, s.db(), s.Lineage); err != nil {
 		return err
 	}
@@ -248,6 +310,6 @@ func (s *Service) materializeFacts(ctx context.Context) error {
 			return fmt.Errorf("materialize image facts: %w", err)
 		}
 	}
-	s.facts = true
+	s.facts.Store(true)
 	return nil
 }

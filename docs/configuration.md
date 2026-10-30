@@ -107,6 +107,6 @@ log-level: info
 | `serve.url` | | Server CLI commands should query instead of the file |
 | `log-level` | `info` | `debug`, `info`, `warn` or `error` |
 
-See [Crawling large registries](guides/crawling.md) for how the filters and the ECR API cut crawl time.
+See [Scaling to large registries](guides/scaling.md) for sizing, the filters, the ECR API and background indexing.
 
 Accessible output for screen readers: set `STRATA_ACCESSIBLE=1` to replace the spinner with plain progress lines. Colors follow `NO_COLOR` and switch off when output is not a terminal.

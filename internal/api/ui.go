@@ -28,6 +28,16 @@ func (s *Server) GetOverview(ctx context.Context, _ GetOverviewRequestObject) (G
 	return GetOverviewdefaultJSONResponse{Body: body, StatusCode: st}, nil
 }
 
+// GetStatus reports the running index.
+func (s *Server) GetStatus(_ context.Context, _ GetStatusRequestObject) (GetStatusResponseObject, error) {
+	out, err := convert[IndexStatus](s.svc.Status())
+	if err != nil {
+		st, body := classify(err)
+		return GetStatusdefaultJSONResponse{Body: body, StatusCode: st}, nil
+	}
+	return GetStatus200JSONResponse(out), nil
+}
+
 // GetOutline returns one level of the lineage outline.
 func (s *Server) GetOutline(ctx context.Context, r GetOutlineRequestObject) (GetOutlineResponseObject, error) {
 	p := r.Params

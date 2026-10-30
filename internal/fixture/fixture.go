@@ -7,6 +7,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
+	"strconv"
 	"testing"
 	"time"
 
@@ -96,4 +98,33 @@ func Open(t testing.TB, b *store.Batch) *store.Store {
 		}
 	}
 	return s
+}
+
+// Org builds a store batch of n images in a three-level organization: a
+// few OS bases, language bases on each, and applications on those, spread
+// over repos of ten tags each with one tag per image. Benchmarks use it to
+// size refresh and queries without crawling.
+func Org(n int) *store.Batch {
+	b := &store.Batch{}
+	add := func(img *model.Image, tag string, day int) {
+		Created(img, -day)
+		b.Images = append(b.Images, img)
+		t := Tag(img, tag, -day)
+		b.Tags = append(b.Tags, t)
+		b.Events = append(b.Events, Event(t.Repo, t.Tag, t.Digest, -day))
+	}
+	const oses, langs = 4, 5
+	for o := range oses {
+		add(Image(fmt.Sprintf("os-%d", o), "reg/base/os", fmt.Sprintf("os-%d", o)), fmt.Sprintf("v%d", o), 400)
+		for l := range langs {
+			add(Image(fmt.Sprintf("lang-%d-%d", o, l), "reg/base/lang-"+strconv.Itoa(l), fmt.Sprintf("os-%d", o), fmt.Sprintf("lang-%d-%d", o, l)), fmt.Sprintf("os%d", o), 200)
+		}
+	}
+	for i := 0; len(b.Images) < n; i++ {
+		o, l := i%oses, (i/oses)%langs
+		repo := fmt.Sprintf("reg/team-%d/app-%d", i%25, i/10)
+		img := Label(Image(fmt.Sprintf("app-%d", i), repo, fmt.Sprintf("os-%d", o), fmt.Sprintf("lang-%d-%d", o, l), fmt.Sprintf("app-%d", i)), "team", fmt.Sprintf("team-%d", i%25))
+		add(img, fmt.Sprintf("v%d", i%10), i%720)
+	}
+	return b
 }

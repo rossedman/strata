@@ -5,8 +5,10 @@
 ```sh
 strata ui                            # the web UI for your own index, on localhost only
 strata serve                         # http://127.0.0.1:7878
-strata serve --reindex-every 15m     # also re-crawl the configured registries
+strata serve --reindex-every 6h      # also crawl the configured registries in the background
 ```
+
+With `--reindex-every`, the server crawls at startup and then on that schedule. The UI works throughout: a banner shows the crawl's progress, and lineage, staleness and the views refresh every `--refresh-every` (default 10 minutes) until the crawl finishes. See [Scaling to large registries](scaling.md#index-in-the-background) for running a first crawl of millions of images this way.
 
 | Path | What |
 | --- | --- |

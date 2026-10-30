@@ -275,6 +275,24 @@ paths:
                 $ref: "#/components/schemas/Overview"
         default:
           $ref: "#/components/responses/Error"
+  /v1/status:
+    get:
+      operationId: getStatus
+      summary: Progress of the running index
+      description: |
+        Whether `strata serve` is crawling, how far it has got, and when the
+        views were last refreshed. While a long crawl runs, the other UI
+        endpoints answer from what is indexed so far.
+      tags: [ui]
+      responses:
+        "200":
+          description: The index status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IndexStatus"
+        default:
+          $ref: "#/components/responses/Error"
   /v1/outline:
     get:
       operationId: getOutline
@@ -1107,6 +1125,42 @@ components:
         indexed_at:
           type: string
           format: date-time
+    CrawlStats:
+      description: "Running totals of a crawl"
+      type: object
+      required: [repos_total, repos, repos_resumed, tags, new_images, tag_moves, requests, referrers, repos_filtered, tags_filtered, images_filtered]
+      properties:
+        repos_total: { type: integer, format: int64, description: "Repos this crawl visits, once listed" }
+        repos: { type: integer, format: int64, description: "Repos crawled so far" }
+        repos_resumed: { type: integer, format: int64, description: "Repos an earlier run already finished" }
+        tags: { type: integer, format: int64 }
+        new_images: { type: integer, format: int64 }
+        tag_moves: { type: integer, format: int64 }
+        requests: { type: integer, format: int64 }
+        referrers: { type: integer, format: int64 }
+        repos_filtered: { type: integer, format: int64 }
+        tags_filtered: { type: integer, format: int64 }
+        images_filtered: { type: integer, format: int64 }
+    IndexStatus:
+      description: "State of the running or last index"
+      type: object
+      required: [running, refresh_every_seconds, crawl]
+      properties:
+        running: { type: boolean }
+        registry: { type: string }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
+        refreshed_at:
+          type: string
+          format: date-time
+          description: When lineage, staleness and the views were last recomputed
+        refresh_every_seconds:
+          type: integer
+          format: int64
+          description: How often views refresh during a crawl; 0 means only at the end
+        crawl:
+          $ref: "#/components/schemas/CrawlStats"
+        error: { type: string, description: "Why the last index failed" }
     Change:
       description: "One line of a diff between snapshots"
       type: object
