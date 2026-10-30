@@ -98,10 +98,11 @@ func (n Call) String() string {
 	return n.Name + "(" + strings.Join(parts, ", ") + ")"
 }
 
-// String formats a Value, quoting strings.
+// String formats a Value, quoting strings with the only escapes the lexer
+// reads, \" and \\, so printing and re-parsing gives the same value.
 func (v Value) String() string {
 	if v.Quoted {
-		return fmt.Sprintf("%q", v.Text)
+		return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(v.Text) + `"`
 	}
 	return v.Text
 }

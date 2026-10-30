@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -50,9 +51,13 @@ read-only.`,
 			return err
 		}
 		ctx, cancel := context.WithCancel(cmd.Context())
+		// The re-crawl loop must stop before the deferred store close runs,
+		// so cancel it and wait for it on the way out.
+		var loop sync.WaitGroup
+		defer loop.Wait()
 		defer cancel()
 		if every := state.V.GetDuration("reindex-every"); every > 0 {
-			go reindexLoop(ctx, svc, every)
+			loop.Go(func() { reindexLoop(ctx, svc, every) })
 		}
 		srv := &http.Server{Addr: c.Addr, Handler: h, ReadHeaderTimeout: api.ReadHeaderTimeout}
 		ln, err := net.Listen("tcp", c.Addr)
