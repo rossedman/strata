@@ -16,21 +16,25 @@ import (
 
 // ImageInfo is what the index knows about one image.
 type ImageInfo struct {
-	Digest      string            `json:"digest"`
-	Repo        string            `json:"repo"`
-	Label       string            `json:"label"`
-	Tags        []string          `json:"tags"`
-	IndexDigest string            `json:"index_digest,omitempty"`
-	Platform    string            `json:"platform"`
-	Platforms   []string          `json:"platforms,omitempty"`
-	Created     *time.Time        `json:"created,omitempty"`
-	AgeDays     *int              `json:"age_days,omitempty"`
-	Size        int64             `json:"size"`
-	LayerCount  int               `json:"layer_count"`
-	TopChainID  string            `json:"top_chain_id"`
-	External    bool              `json:"external"`
-	Labels      map[string]string `json:"labels"`
-	Config      ConfigInfo        `json:"config"`
+	Digest      string     `json:"digest"`
+	Repo        string     `json:"repo"`
+	Label       string     `json:"label"`
+	Tags        []string   `json:"tags"`
+	IndexDigest string     `json:"index_digest,omitempty"`
+	Platform    string     `json:"platform"`
+	Platforms   []string   `json:"platforms,omitempty"`
+	Created     *time.Time `json:"created,omitempty"`
+	AgeDays     *int       `json:"age_days,omitempty"`
+	// Pushed is when the registry says the image was first pushed (ECR);
+	// FirstSeen is when strata first indexed it.
+	Pushed     *time.Time        `json:"pushed,omitempty"`
+	FirstSeen  *time.Time        `json:"first_seen,omitempty"`
+	Size       int64             `json:"size"`
+	LayerCount int               `json:"layer_count"`
+	TopChainID string            `json:"top_chain_id"`
+	External   bool              `json:"external"`
+	Labels     map[string]string `json:"labels"`
+	Config     ConfigInfo        `json:"config"`
 }
 
 // ConfigInfo holds the run-time fields from the image config.
@@ -129,7 +133,7 @@ func (s *Service) Explain(ctx context.Context, ref, platform string, history boo
 
 // imageInfo fills in an image's own fields.
 func (s *Service) imageInfo(ctx context.Context, digest string, im *ImageInfo) error {
-	var created sql.NullTime
+	var created, pushed, firstSeen sql.NullTime
 	var age sql.NullInt64
 	var index, top sql.NullString
 	var labels string
@@ -138,12 +142,14 @@ func (s *Service) imageInfo(ctx context.Context, digest string, im *ImageInfo) e
 		SELECT digest, repo, coalesce(index_digest, ''), platform, created, age_days, coalesce(size, 0), coalesce(layers, 0),
 			top_chain_id, external, coalesce(labels::JSON::VARCHAR, '{}'), tag_refs,
 			coalesce(config_user, ''), config_entrypoint, config_cmd, config_ports, config_env_keys,
-			coalesce(config_workdir, ''), coalesce(config_stop_signal, ''), coalesce(config_healthcheck, false)
+			coalesce(config_workdir, ''), coalesce(config_stop_signal, ''), coalesce(config_healthcheck, false),
+			pushed, first_seen
 		FROM `+s.view()+` WHERE digest = ?`, digest).Scan(
 		&im.Digest, &im.Repo, &index, &im.Platform, &created, &age, &im.Size, &im.LayerCount,
 		&top, &im.External, &labels, &tags,
 		&im.Config.User, &entry, &cmd, &ports, &envKeys,
-		&im.Config.Workdir, &im.Config.StopSignal, &im.Config.Healthcheck)
+		&im.Config.Workdir, &im.Config.StopSignal, &im.Config.Healthcheck,
+		&pushed, &firstSeen)
 	if err != nil {
 		return fmt.Errorf("read image %s: %w", digest, err)
 	}
@@ -156,6 +162,7 @@ func (s *Service) imageInfo(ctx context.Context, digest string, im *ImageInfo) e
 		a := int(age.Int64)
 		im.AgeDays = &a
 	}
+	im.Pushed, im.FirstSeen = utcTime(pushed), utcTime(firstSeen)
 	im.Tags = toStrings(tags)
 	im.Label = graph.Label(im.Repo, im.Digest, im.Tags)
 	im.Labels = map[string]string{}
@@ -377,4 +384,13 @@ func findings(ex *Explanation) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// utcTime returns a nullable time in UTC, or nil.
+func utcTime(t sql.NullTime) *time.Time {
+	if !t.Valid {
+		return nil
+	}
+	u := t.Time.UTC()
+	return &u
 }

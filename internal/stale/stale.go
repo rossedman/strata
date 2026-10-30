@@ -334,9 +334,11 @@ func load(ctx context.Context, db *sql.DB, policy Policy, now time.Time) (*Evalu
 	rows, err := db.QueryContext(ctx, `
 		SELECT v.digest, coalesce(v.index_digest, ''), v.repo, v.created, v.tags, v.descendants,
 			coalesce(v.labels::JSON::VARCHAR, '{}'), v.root_refs,
-			(SELECT max(last_pulled) FROM pulls p WHERE p.digest = v.digest),
+			greatest(pl.last_pulled, plx.last_pulled),
 			coalesce(v.parent, ''), coalesce(p.index_digest, ''), coalesce(p.repo, ''), p.created
-		FROM image_view v LEFT JOIN images p ON p.digest = v.parent`)
+		FROM image_view v LEFT JOIN images p ON p.digest = v.parent
+		LEFT JOIN (SELECT digest, max(last_pulled) AS last_pulled FROM pulls GROUP BY digest) pl ON pl.digest = v.digest
+		LEFT JOIN (SELECT digest, max(last_pulled) AS last_pulled FROM pulls GROUP BY digest) plx ON plx.digest = v.index_digest`)
 	if err != nil {
 		return nil, nil, fmt.Errorf("read image facts: %w", err)
 	}

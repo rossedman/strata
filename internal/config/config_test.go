@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestDefaultDB(t *testing.T) {
@@ -36,6 +37,13 @@ func TestValidate(t *testing.T) {
 		{Config{DB: "x", Registries: []Registry{{}}}, false},
 		{Config{DB: "x", Registries: []Registry{{Host: "h", Workers: -1}}}, false},
 		{Config{DB: "x", Registries: []Registry{{Host: "h", Workers: 4, Rate: 10}}}, true},
+		{Config{DB: "x", Registries: []Registry{{Host: "h", Provider: "gcr"}}}, false},
+		{Config{DB: "x", Registries: []Registry{{Host: "h", Provider: ProviderECR}}}, false},
+		{Config{DB: "x", Registries: []Registry{{Host: "h", ExcludeTags: []string{"[x"}}}}, false},
+		{Config{DB: "x", Registries: []Registry{{Host: "h", Platforms: []string{"linux"}}}}, false},
+		{Config{DB: "x", Registries: []Registry{{Host: "h", PushedSince: "90d"}}}, false},
+		{Config{DB: "x", Registries: []Registry{{Host: ecrHost, PushedSince: "3parsecs"}}}, false},
+		{Config{DB: "x", Registries: []Registry{{Host: ecrHost, PushedSince: "90d", IncludeRepos: []string{"team-*/**"}, Platforms: []string{"linux/amd64"}}}}, true},
 	}
 	for i, tt := range tests {
 		if err := tt.c.Validate(); (err == nil) != tt.ok {
@@ -49,5 +57,30 @@ func TestValidate(t *testing.T) {
 	c.PolicyFile = "/nope.yaml"
 	if _, err := c.Policy(); err == nil {
 		t.Fatal("missing policy file accepted")
+	}
+}
+
+const ecrHost = "123456789012.dkr.ecr.us-east-1.amazonaws.com"
+
+func TestRegistryProvider(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		r    Registry
+		want bool
+	}{
+		{Registry{Host: ecrHost}, true},
+		{Registry{Host: ecrHost, Provider: ProviderAuto}, true},
+		{Registry{Host: ecrHost, Provider: ProviderDistribution}, false},
+		{Registry{Host: ecrHost, Provider: ProviderECR}, true},
+		{Registry{Host: "reg.io"}, false},
+	}
+	for _, tt := range tests {
+		if got := tt.r.UsesECR(); got != tt.want {
+			t.Errorf("%+v: UsesECR = %v", tt.r, got)
+		}
+	}
+	f, err := Registry{Host: ecrHost, PushedSince: "2w", ExcludeTags: []string{"pr-*"}}.Filter()
+	if err != nil || f.PushedSince != 14*24*time.Hour || len(f.ExcludeTags) != 1 {
+		t.Fatalf("filter = %+v, %v", f, err)
 	}
 }

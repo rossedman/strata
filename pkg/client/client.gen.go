@@ -301,6 +301,33 @@ func (e SearchParamsAge) Valid() bool {
 	}
 }
 
+// Defines values for SearchParamsPushed.
+const (
+	SearchParamsPushedGreaterThan1Year SearchParamsPushed = "> 1 year"
+	SearchParamsPushedLessThan30Days   SearchParamsPushed = "< 30 days"
+	SearchParamsPushedN180Days1Year    SearchParamsPushed = "180 days–1 year"
+	SearchParamsPushedN30180Days       SearchParamsPushed = "30–180 days"
+	SearchParamsPushedUnknown          SearchParamsPushed = "unknown"
+)
+
+// Valid indicates whether the value is a known member of the SearchParamsPushed enum.
+func (e SearchParamsPushed) Valid() bool {
+	switch e {
+	case SearchParamsPushedGreaterThan1Year:
+		return true
+	case SearchParamsPushedLessThan30Days:
+		return true
+	case SearchParamsPushedN180Days1Year:
+		return true
+	case SearchParamsPushedN30180Days:
+		return true
+	case SearchParamsPushedUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
 // BaseVersion One digest a base tag has held, and how much is built on it
 type BaseVersion struct {
 	Children    int                   `json:"children"`
@@ -452,20 +479,26 @@ type ImageInfo struct {
 	AgeDays *int `json:"age_days,omitempty"`
 
 	// Config Run-time fields from the image config; environment values are never stored except allowlisted ones
-	Config      ConfigInfo        `json:"config"`
-	Created     *time.Time        `json:"created,omitempty"`
-	Digest      string            `json:"digest"`
-	External    bool              `json:"external"`
+	Config   ConfigInfo `json:"config"`
+	Created  *time.Time `json:"created,omitempty"`
+	Digest   string     `json:"digest"`
+	External bool       `json:"external"`
+
+	// FirstSeen When strata first indexed the image
+	FirstSeen   *time.Time        `json:"first_seen,omitempty"`
 	IndexDigest *string           `json:"index_digest,omitempty"`
 	Label       string            `json:"label"`
 	Labels      map[string]string `json:"labels"`
 	LayerCount  int               `json:"layer_count"`
 	Platform    string            `json:"platform"`
 	Platforms   *[]string         `json:"platforms,omitempty"`
-	Repo        string            `json:"repo"`
-	Size        int64             `json:"size"`
-	Tags        []string          `json:"tags"`
-	TopChainId  string            `json:"top_chain_id"`
+
+	// Pushed When the registry says the image was first pushed (ECR only)
+	Pushed     *time.Time `json:"pushed,omitempty"`
+	Repo       string     `json:"repo"`
+	Size       int64      `json:"size"`
+	Tags       []string   `json:"tags"`
+	TopChainId string     `json:"top_chain_id"`
 }
 
 // LayerInfo One layer and the build step that created it
@@ -826,6 +859,9 @@ type SearchParams struct {
 	// Age Selected age buckets
 	Age *[]SearchParamsAge `form:"age,omitempty" json:"age,omitempty"`
 
+	// Pushed Selected push-age buckets, from registries that report push times (ECR)
+	Pushed *[]SearchParamsPushed `form:"pushed,omitempty" json:"pushed,omitempty"`
+
 	// Offset Rows to skip
 	Offset *Offset `form:"offset,omitempty" json:"offset,omitempty"`
 
@@ -835,6 +871,9 @@ type SearchParams struct {
 
 // SearchParamsAge defines parameters for Search.
 type SearchParamsAge string
+
+// SearchParamsPushed defines parameters for Search.
+type SearchParamsPushed string
 
 // GetStaleParams defines parameters for GetStale.
 type GetStaleParams struct {
@@ -1998,6 +2037,18 @@ func NewSearchRequest(server string, params *SearchParams) (*http.Request, error
 		if params.Age != nil {
 
 			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "age", *params.Age, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Pushed != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "pushed", *params.Pushed, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {

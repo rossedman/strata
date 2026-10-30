@@ -178,7 +178,53 @@ func TestFoldFilter(t *testing.T) {
 	if got != `(a = 1 or b = 2) and stale in ["stale"] and (not age exists)` {
 		t.Fatalf("foldFilter = %q", got)
 	}
+	got = foldFilter("", []facetDef{{field: "pushed_age", selected: []string{"< 30 days", "bogus"}}})
+	if got != `(pushed_age < 30d)` {
+		t.Fatalf("foldFilter = %q", got)
+	}
 	if foldFilter("", nil) != "" {
 		t.Fatal("empty fold")
+	}
+}
+
+func TestSearchPushedFacet(t *testing.T) {
+	t.Parallel()
+	e := setup(t)
+	// No push times: the facet is left out.
+	res, err := e.svc.Search(ctx, SearchOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range res.Facets {
+		if f.Name == "Pushed" {
+			t.Fatalf("pushed facet without push times: %+v", f)
+		}
+	}
+	var digest string
+	if err := e.svc.db().QueryRow(`SELECT digest FROM images ORDER BY digest LIMIT 1`).Scan(&digest); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.db().Exec(`INSERT INTO pushes VALUES ('r', ?, now() - INTERVAL 3 DAY, NULL)`, digest); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.svc.Refresh(ctx); err != nil {
+		t.Fatal(err)
+	}
+	res, err = e.svc.Search(ctx, SearchOptions{Pushed: []string{"< 30 days"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Total != 1 || res.Hits[0].Digest != digest || res.Filter != "(pushed_age < 30d)" {
+		t.Fatalf("pushed search = %+v", res)
+	}
+	if f := res.Facets[len(res.Facets)-1]; f.Name != "Pushed" || f.Values[0].Value != "< 30 days" || !f.Values[0].Selected {
+		t.Fatalf("pushed facet = %+v", f)
+	}
+	ex, err := e.svc.Explain(ctx, digest, "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ex.Image.Pushed == nil || ex.Image.FirstSeen == nil {
+		t.Fatalf("explain dates = %+v", ex.Image)
 	}
 }

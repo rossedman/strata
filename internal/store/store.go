@@ -124,11 +124,14 @@ type Batch struct {
 	DeleteTags []model.Tag
 	Events     []model.TagEvent
 	Referrers  []model.Referrer
+	// Pushes are push and pull times reported by the registry's API. They
+	// change between crawls, so they replace what was stored.
+	Pushes []model.Push
 }
 
 // Len returns the number of records in the batch.
 func (b *Batch) Len() int {
-	return len(b.Images) + len(b.Index) + len(b.Tags) + len(b.DeleteTags) + len(b.Events) + len(b.Referrers)
+	return len(b.Images) + len(b.Index) + len(b.Tags) + len(b.DeleteTags) + len(b.Events) + len(b.Referrers) + len(b.Pushes)
 }
 
 // Write stores a batch in one transaction, bulk-loading through DuckDB's
@@ -279,6 +282,30 @@ func writeBatch(conn driver.Conn, b *Batch) error {
 			}
 			return nil
 		}},
+		{"pushes", `INSERT OR REPLACE INTO pushes
+			SELECT col1, col2, min(col3), max(col4) FROM appended_data GROUP BY col1, col2`, func(a *duckdb.Appender) error {
+			for _, p := range b.Pushes {
+				if err := a.AppendRow(p.Repo, p.Digest, nullTime(p.PushedAt), nullTime(p.LastPulled)); err != nil {
+					return err
+				}
+			}
+			return nil
+		}},
+		// A registry's last-pull time feeds the same pull signal as imported
+		// pull counts; the count is unknown.
+		{"pulls", `INSERT OR REPLACE INTO pulls
+			SELECT col1, col2, NULL, max(col4) FROM appended_data GROUP BY col1, col2`, func(a *duckdb.Appender) error {
+			for _, p := range b.Pushes {
+				if p.LastPulled.IsZero() {
+					continue
+				}
+				t := p.LastPulled.UTC()
+				if err := a.AppendRow(p.Digest, time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC), nil, t); err != nil {
+					return err
+				}
+			}
+			return nil
+		}},
 	}
 	for _, st := range steps {
 		if err := appendTo(conn, st.table, st.query, st.rows); err != nil {
@@ -346,6 +373,14 @@ func nullable(s string) any {
 		return nil
 	}
 	return s
+}
+
+// nullTime returns nil for the zero time, so it is stored as NULL.
+func nullTime(t time.Time) any {
+	if t.IsZero() {
+		return nil
+	}
+	return t
 }
 
 // nonNil returns an empty slice for nil, so list columns hold [] not NULL.

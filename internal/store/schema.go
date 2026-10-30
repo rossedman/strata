@@ -114,6 +114,13 @@ var schema = []string{
 		last_pulled TIMESTAMPTZ,
 		PRIMARY KEY (digest, day)
 	)`,
+	`CREATE TABLE IF NOT EXISTS pushes (
+		repo        VARCHAR,
+		digest      VARCHAR,
+		pushed_at   TIMESTAMPTZ,
+		last_pulled TIMESTAMPTZ,
+		PRIMARY KEY (repo, digest)
+	)`,
 	`CREATE TABLE IF NOT EXISTS edges (
 		child      VARCHAR,
 		parent     VARCHAR,
@@ -209,6 +216,19 @@ var schema = []string{
 		WHERE t.repo || ':' || t.tag = r OR t.repo || '@' || t.digest = r OR t.digest = r
 		UNION
 		SELECT id FROM phantoms WHERE id = r`,
+	// referrer_kinds says which kinds of artifact are attached to each
+	// subject. Artifacts attached to a multi-platform index count for
+	// every platform image in it.
+	`CREATE OR REPLACE VIEW referrer_kinds AS
+		SELECT subject,
+			bool_or(kind = 'sbom') AS has_sbom,
+			bool_or(kind = 'signature') AS has_signature,
+			bool_or(kind = 'attestation') AS has_attestation
+		FROM referrers GROUP BY subject`,
+	// push_times is each manifest's first push to any repo, from
+	// registries that report it.
+	`CREATE OR REPLACE VIEW push_times AS
+		SELECT digest, min(pushed_at) AS pushed_at FROM pushes GROUP BY digest`,
 	// image_view is the flat row the query language compiles against.
 	`CREATE OR REPLACE VIEW image_view AS
 		SELECT
@@ -217,6 +237,9 @@ var schema = []string{
 			i.created,
 			CASE WHEN i.created IS NULL OR year(i.created) < 1980 THEN NULL
 			     ELSE date_diff('day', i.created, now()) END AS age_days,
+			coalesce(pu.pushed_at, pux.pushed_at) AS pushed,
+			date_diff('day', coalesce(pu.pushed_at, pux.pushed_at), now()) AS pushed_age_days,
+			i.indexed_at AS first_seen,
 			i.size, i.layer_count AS layers, i.top_chain_id, i.config_digest, coalesce(i.external, false) AS external,
 			i.config_user, i.config_entrypoint, i.config_cmd, i.config_ports, i.config_env_keys,
 			i.config_workdir, i.config_stop_signal, i.config_healthcheck,
@@ -229,9 +252,9 @@ var schema = []string{
 			coalesce(ln.conflict, false) AS lineage_conflict,
 			coalesce(pr.refs, CASE WHEN ln.parent IS NULL THEN []::VARCHAR[] ELSE [ln.parent] END) AS parent_refs,
 			coalesce(rr.refs, CASE WHEN ln.root IS NULL THEN [i.digest] ELSE [ln.root] END) AS root_refs,
-			coalesce(ref.has_sbom, false) AS has_sbom,
-			coalesce(ref.has_signature, false) AS has_signature,
-			coalesce(ref.has_attestation, false) AS has_attestation,
+			coalesce(ref.has_sbom, false) OR coalesce(refx.has_sbom, false) AS has_sbom,
+			coalesce(ref.has_signature, false) OR coalesce(refx.has_signature, false) AS has_signature,
+			coalesce(ref.has_attestation, false) OR coalesce(refx.has_attestation, false) AS has_attestation,
 			s.verdict AS stale,
 			s.reasons AS stale_reasons,
 			coalesce(s.base_drift_generations, 0) AS stale_base_drift,
@@ -249,12 +272,9 @@ var schema = []string{
 		LEFT JOIN lineage ln ON ln.digest = i.digest
 		LEFT JOIN image_refs pr ON pr.digest = ln.parent
 		LEFT JOIN image_refs rr ON rr.digest = ln.root
-		LEFT JOIN (
-			SELECT subject,
-				bool_or(kind = 'sbom') AS has_sbom,
-				bool_or(kind = 'signature') AS has_signature,
-				bool_or(kind = 'attestation') AS has_attestation
-			FROM referrers GROUP BY subject
-		) ref ON ref.subject = i.digest
+		LEFT JOIN referrer_kinds ref ON ref.subject = i.digest
+		LEFT JOIN referrer_kinds refx ON refx.subject = i.index_digest
+		LEFT JOIN push_times pu ON pu.digest = i.digest
+		LEFT JOIN push_times pux ON pux.digest = i.index_digest
 		LEFT JOIN staleness s ON s.digest = i.digest`,
 }

@@ -38,6 +38,9 @@ List fields (`tag`, `ref`, `config.ports` and the like) match when any element m
 | `index` | digest of the multi-platform index holding the image |
 | `created` | creation time from the image config |
 | `age` | days since created |
+| `pushed` | when the image was first pushed, from registries that report it (ECR) |
+| `pushed_age` | days since pushed |
+| `first_seen` | when strata first indexed the image |
 | `size` | compressed size from the manifest |
 | `layers` | number of layers |
 | `platform`, `os`, `arch`, `variant` | platform, such as `linux/arm64/v8` |
@@ -69,6 +72,8 @@ List fields (`tag`, `ref`, `config.ports` and the like) match when any element m
 | `config.env_keys` | environment variable names (values are never stored) |
 | `config.workdir`, `config.stop_signal` | working directory and stop signal |
 | `config.healthcheck` | a healthcheck is defined |
+
+`created` and `age` come from the image config, which reproducible builds (ko, Bazel, Nix, buildpacks) often set to 1970 or another fixed date; `age` is unknown for those. On ECR, `pushed` and `pushed_age` give the real push time, and `first_seen` works on every registry.
 
 `strata query --help` prints the same list from the binary you have installed.
 

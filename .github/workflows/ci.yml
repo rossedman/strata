@@ -82,6 +82,7 @@ jobs:
           - { pkg: ./internal/chain, target: FuzzIDs }
           - { pkg: ./internal/query, target: FuzzCompile }
           - { pkg: ./internal/crawl, target: FuzzRedact }
+          - { pkg: ./internal/crawl, target: FuzzGlob }
           - { pkg: ./internal/graph, target: FuzzBudget }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
