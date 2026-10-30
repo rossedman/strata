@@ -23,7 +23,7 @@ It needs registry read access and nothing else: no source repos, no CI, no datab
 go install github.com/rossedman/strata@latest   # needs a C compiler: DuckDB links through cgo
 ```
 
-Or download a signed archive for Linux, macOS or Windows from [Releases](https://github.com/rossedman/strata/releases). [Verifying releases](SECURITY.md#verifying-releases) shows how to check the signature and provenance.
+Or download a signed archive for Linux or macOS from [Releases](https://github.com/rossedman/strata/releases). [Verifying releases](SECURITY.md#verifying-releases) shows how to check the signature and provenance.
 
 ## Quick start
 

@@ -33,7 +33,7 @@ jobs:
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
       # DuckDB is linked through cgo, so every platform needs its own C
       # toolchain. goreleaser-cross bundles them (gcc for Linux, osxcross
-      # for macOS, mingw for Windows). cosign is mounted in, and the OIDC
+      # for macOS). cosign is mounted in, and the OIDC
       # request variables are passed through so keyless signing works.
       - name: Build, sign and publish
         env:
@@ -53,5 +53,4 @@ jobs:
         with:
           subject-path: |
             dist/*.tar.gz
-            dist/*.zip
             dist/checksums.txt
