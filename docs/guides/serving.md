@@ -21,6 +21,10 @@ The API is read-only: nothing in it can delete, tag or edit images. Requests are
 
 The UI is built into the binary and reads the same JSON API, so there is nothing else to deploy. Every view is a URL you can bookmark or paste into a ticket, and each shows the `strata` command that gives the same answer.
 
+![The strata web UI Overview: image and repo totals, the staleness mix, the root bases holding the stale images, and a registry map](../assets/ui-overview.webp)
+
+Links work with a ref as well as a digest: `#image?d=reg.example.com/payments/api:1.8.2` resolves the tag and opens the image it points at.
+
 | View | Shows |
 | --- | --- |
 | Overview | image, repo and storage totals, the staleness mix, the root bases holding the most stale images, the week's changes, and a registry map |

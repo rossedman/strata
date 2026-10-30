@@ -52,7 +52,35 @@
     setTimeout(next, 500);
   }
 
-  function init() { setupCopy(); setupTyping(); }
+  // Web UI tour: one screenshot at a time, switched by tabs that follow
+  // the ARIA tabs pattern (arrow keys move between them).
+  function setupTabs() {
+    document.querySelectorAll("[data-ui-tabs]").forEach(function (root) {
+      var tabs = Array.prototype.slice.call(root.querySelectorAll('[role="tab"]'));
+      function select(tab, focus) {
+        tabs.forEach(function (t) {
+          var on = t === tab;
+          t.setAttribute("aria-selected", on ? "true" : "false");
+          t.tabIndex = on ? 0 : -1;
+          document.getElementById(t.getAttribute("aria-controls")).hidden = !on;
+        });
+        if (focus) tab.focus();
+      }
+      tabs.forEach(function (t, i) {
+        t.addEventListener("click", function () { select(t, false); });
+        t.addEventListener("keydown", function (e) {
+          var n = { ArrowRight: 1, ArrowLeft: -1 }[e.key];
+          if (!n) return;
+          e.preventDefault();
+          select(tabs[(i + n + tabs.length) % tabs.length], true);
+        });
+      });
+      select(tabs[0], false);
+      root.classList.add("is-ready");
+    });
+  }
+
+  function init() { setupCopy(); setupTyping(); setupTabs(); }
   if (window.document$) window.document$.subscribe(init);
   else document.addEventListener("DOMContentLoaded", init);
 })();

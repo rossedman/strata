@@ -383,9 +383,16 @@
       return;
     }
     el.innerHTML = '<p class="loading">Loading the image…</p>';
+    // A link may name the image by ref, such as repo:tag; resolve it and
+    // replace the URL with the digest it points at.
+    if (!/^sha256:[0-9a-f]{12,64}$/.test(d)) {
+      api("v1/resolve", { ref: d }).then(function (r) { location.replace("#image?d=" + encodeURIComponent(r.digest)); })
+        .catch(function (e) { el.innerHTML = '<p class="loading err">' + (e.status === 404 ? "This image is not in the index." : "Could not resolve " + esc(d) + ": " + esc(e.message)) + "</p>"; });
+      return;
+    }
     // A digest's colon is valid in a path segment, and the API's path
     // pattern expects it unescaped.
-    api("v1/images/" + (/^sha256:[0-9a-f]{12,64}$/.test(d) ? d : encodeURIComponent(d))).then(function (ex) { renderImage(el, ex); })
+    api("v1/images/" + d).then(function (ex) { renderImage(el, ex); })
       .catch(function (e) { el.innerHTML = '<p class="loading err">' + (e.status === 404 ? "This image is not in the index." : "Could not load the image: " + esc(e.message)) + "</p>"; });
   }
   function renderImage(el, ex) {

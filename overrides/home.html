@@ -17,7 +17,7 @@
         <img class="lp-hero__logo" src="{{ 'assets/site/logo.svg' | url }}" alt="">
         <p class="lp-kicker">rossedman/strata</p>
         <h1 class="lp-title">Every image's lineage<br><span>and staleness.</span></h1>
-        <p class="lp-tagline">strata indexes a container registry into one local file and tells platform teams what each image is built on and whether it has gone stale. <b>From registry metadata alone, with the reasons spelled out.</b></p>
+        <p class="lp-tagline">strata indexes a container registry into one local file and tells platform teams what each image is built on and whether it has gone stale. <b>From registry metadata alone, with the reasons spelled out.</b> Browse it in the web UI, script it from the CLI, or hand it to an agent over MCP.</p>
         <div class="lp-install">
           <span class="lp-install__prompt">$</span>
           <code>{{ install }}</code>
@@ -27,7 +27,7 @@
         </div>
         <div class="lp-cta">
           <a class="lp-btn lp-btn--primary" href="{{ 'getting-started/' | url }}">Get started {% include ".icons/material/arrow-right.svg" %}</a>
-          <a class="lp-btn" href="{{ 'guides/lineage/' | url }}">{% include ".icons/material/family-tree.svg" %} How lineage works</a>
+          <a class="lp-btn" href="#ui">{% include ".icons/material/monitor-dashboard.svg" %} Tour the web UI</a>
         </div>
       </div>
 
@@ -51,13 +51,98 @@
 
     <ul class="lp-wrap lp-stats">
       <li><b>0</b><span>layer blobs downloaded: manifests and configs only</span></li>
-      <li><b>45</b><span>fields in the query language, compiled to SQL</span></li>
+      <li><b>48</b><span>fields in the query language, compiled to SQL</span></li>
       <li><b>22</b><span>commands, from index to the web UI</span></li>
       <li><b>9</b><span>output formats, from NDJSON to an HTML explorer</span></li>
     </ul>
   </section>
 
-  <section class="lp-section" id="problem">
+  <section class="lp-section lp-section--alt" id="ui">
+    <div class="lp-wrap">
+      <p class="lp-eyebrow">The web UI</p>
+      <h2>The whole registry at a glance.<br><span>Every image one click away.</span></h2>
+      <p class="lp-lede lp-lede--center"><code>strata ui</code> opens it on your own index; <code>strata serve</code> shares it with your team. It's built into the binary, loads nothing from outside the server, and stays fast at millions of images: the lineage outline loads a level at a time and every list pages.</p>
+      <div class="lp-ui" data-ui-tabs>
+        <div class="lp-ui__tabs" role="tablist" aria-label="Web UI views">
+          {% for id, label, icon in [
+            ("overview", "Overview", "view-dashboard-outline"),
+            ("lineage", "Lineage", "file-tree-outline"),
+            ("search", "Search", "magnify"),
+            ("image", "Image", "cube-outline"),
+          ] %}
+          <button type="button" role="tab" id="lp-tab-{{ id }}" aria-controls="lp-ui-{{ id }}" aria-selected="{{ 'true' if loop.first else 'false' }}" tabindex="{{ '0' if loop.first else '-1' }}">{% include ".icons/material/" ~ icon ~ ".svg" %} {{ label }}</button>
+          {% endfor %}
+        </div>
+        <div class="lp-browser">
+          <div class="lp-term__bar"><i></i><i></i><i></i><span>127.0.0.1:7878</span></div>
+          {% for id, alt, caption in [
+            ("overview",
+             "The strata Overview: 30 images in 22 repos, a staleness mix bar of fresh, drifting, stale and abandoned, the root bases holding the stale images, and a registry map from root bases to their descendants.",
+             "<b>Overview.</b> Totals, the staleness mix, the root bases the stale images sit on, and a registry map sized by images and colored by stale share."),
+            ("lineage",
+             "The strata Lineage outline: debian at the root, with base/go, base/node and base/python under it, each with an image count, a verdict bar, the stale share and how many builds behind its tag it is.",
+             "<b>Lineage.</b> Root bases, the bases built on them and the repos below, with image counts, verdict bars and how many builds behind each base is."),
+            ("search",
+             "strata Search for stale in drifting, stale or abandoned: 13 images, facets for verdict, team, root base, platform and age, and the matching strata query command.",
+             "<b>Search.</b> The query language in the top bar, facets whose counts update together, and the <code>strata query</code> command that gives the same answer."),
+            ("image",
+             "The strata Image page for payments/api:1.8.2: drifting because its base moved since it was built, its ancestry chain back to debian, and its layers with the build step behind each.",
+             "<b>Image.</b> Why an image got its verdict, its ancestry back to the root base, and every layer with the build step that made it."),
+          ] %}
+          <figure class="lp-ui__panel" role="tabpanel" id="lp-ui-{{ id }}" aria-labelledby="lp-tab-{{ id }}">
+            <a href="{{ ('assets/ui-' ~ id ~ '.webp') | url }}"><img width="2880" height="1800" src="{{ ('assets/ui-' ~ id ~ '.webp') | url }}" alt="{{ alt }}"{% if not loop.first %} loading="lazy"{% endif %}></a>
+            <figcaption>{{ caption }}</figcaption>
+          </figure>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="lp-section" id="interfaces">
+    <div class="lp-wrap">
+      <p class="lp-eyebrow">Three ways in</p>
+      <h2>One index.<br><span>A UI, a CLI and an agent tool.</span></h2>
+      <p class="lp-lede lp-lede--center">The web UI, the CLI and the MCP server call the same service over the same index, so they give the same answers. Each view in the UI shows its matching command.</p>
+      <div class="lp-ways">
+        <article class="lp-way" style="--accent: var(--brand)">
+          <div class="lp-icon">{% include ".icons/material/monitor-dashboard.svg" %}</div>
+          <h3>Web UI</h3><div class="when">For browsing and sharing</div>
+          <p>Overview, lineage, search and image pages. Every view is a URL you can bookmark or paste into a ticket. Off localhost it sits behind your auth proxy.</p>
+          <pre><code><span class="p">$</span> strata ui
+<span class="d"># or, for a team:</span>
+<span class="p">$</span> strata serve --addr :8080 \
+    --auth-header X-Forwarded-User</code></pre>
+          <a class="lp-way__link" href="{{ 'guides/serving/' | url }}#the-web-ui">The web UI {% include ".icons/material/arrow-right.svg" %}</a>
+        </article>
+        <article class="lp-way" style="--accent: var(--ok)">
+          <div class="lp-icon">{% include ".icons/material/console.svg" %}</div>
+          <h3>CLI</h3><div class="when">For scripts and CI</div>
+          <p>Tables and trees in a terminal; JSON, CSV or NDJSON for pipelines; Mermaid, DOT, SVG or an offline HTML explorer for graphs.</p>
+          <pre><code><span class="p">$</span> strata explain payments/api:1.8.2
+<span class="p">$</span> strata query 'stale = "stale"' \
+    --fields repo,tag,stale -o csv
+<span class="d">repo,tag,stale
+localhost:5000/web/docs,1.0.0,stale</span></code></pre>
+          <a class="lp-way__link" href="{{ 'reference/commands/strata/' | url }}">Command reference {% include ".icons/material/arrow-right.svg" %}</a>
+        </article>
+        <article class="lp-way" style="--accent: var(--info)">
+          <div class="lp-icon">{% include ".icons/material/robot-outline.svg" %}</div>
+          <h3>MCP</h3><div class="when">For agents</div>
+          <p>Six read-only tools: <code>explain</code>, <code>ancestry</code>, <code>descendants</code>, <code>query</code>, <code>stale</code> and <code>roots</code>. The query tool teaches the filter language, so an agent writes its own filters.</p>
+          <pre><code><span class="p">$</span> claude mcp add strata -- strata mcp
+<span class="d">› which payments images are drifting?</span>
+<span class="i">query</span> filter: label.team = "payments"
+             and stale = "drifting"
+<span class="d">payments/api     1.8.2   go-service:2.1
+payments/worker  3.2.0   go-service:2.1</span></code></pre>
+          <a class="lp-way__link" href="{{ 'guides/serving/' | url }}#mcp-for-agents">MCP for agents {% include ".icons/material/arrow-right.svg" %}</a>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section class="lp-section lp-section--alt" id="problem">
     <div class="lp-wrap lp-split">
       <div>
         <p class="lp-eyebrow">The problem</p>
@@ -86,7 +171,7 @@
     </div>
   </section>
 
-  <section class="lp-section lp-section--alt">
+  <section class="lp-section">
     <div class="lp-wrap">
       <p class="lp-eyebrow">Core ideas</p>
       <h2>Three questions,<br><span>one index.</span></h2>
@@ -115,7 +200,7 @@ strata query 'stale.base_drift'</code></pre>
     </div>
   </section>
 
-  <section class="lp-section">
+  <section class="lp-section lp-section--alt">
     <div class="lp-wrap">
       <p class="lp-eyebrow">Why strata</p>
       <h2>Read-only by design.<br><span>Fast where it counts.</span></h2>
@@ -125,7 +210,7 @@ strata query 'stale.base_drift'</code></pre>
           ("restore", "Resumable crawls", "Repos are checkpointed as they finish, so a crash resumes instead of restarting. Re-crawls list tags and compare digests."),
           ("history", "Tag history from day one", "The one thing a registry can't give back. strata records every move and exports it to Parquet to survive rebuilds."),
           ("shield-lock-outline", "Secrets stay out", "Environment values are never stored, only their keys. History commands pass through redaction before they are indexed."),
-          ("api", "API, MCP and CLI agree", "strata serve exposes an OpenAPI-generated JSON API and an MCP endpoint over the same service the CLI calls."),
+          ("speedometer", "Fast at millions", "The UI loads lineage a level at a time and pages every list. Queries and facets run inside DuckDB over a materialized table."),
           ("graph-outline", "Graphs that scale", "Render lineage as a tree, Mermaid, DOT, SVG or an offline HTML explorer, with a node budget that collapses sprawl."),
         ] %}
         <article class="lp-card">
@@ -138,11 +223,11 @@ strata query 'stale.base_drift'</code></pre>
     </div>
   </section>
 
-  <section class="lp-section lp-section--alt" id="quick-start">
+  <section class="lp-section" id="quick-start">
     <div class="lp-wrap lp-split">
       <div>
         <p class="lp-eyebrow">Quick start</p>
-        <h2>Index a registry<br><span>in three commands.</span></h2>
+        <h2>Index a registry<br><span>in three steps.</span></h2>
         <p class="lp-lede">You need Go and a C compiler, since DuckDB links through cgo, plus pull access to a registry. No registry handy? The getting-started guide runs a demo registry seeded with realistic images.</p>
         <a class="lp-btn" href="{{ 'getting-started/' | url }}">{% include ".icons/material/book-open-page-variant-outline.svg" %} Full getting-started guide</a>
       </div>
@@ -157,15 +242,16 @@ strata query 'stale.base_drift'</code></pre>
           <pre class="lp-code"><button class="lp-copy" aria-label="Copy">{% include ".icons/material/content-copy.svg" %}</button><code><span class="p">$</span> strata index --registry reg.example.com</code></pre>
         </li>
         <li>
-          <h4>Ask</h4>
-          <p>See where the stale images are, then why.</p>
-          <pre class="lp-code"><button class="lp-copy" aria-label="Copy">{% include ".icons/material/content-copy.svg" %}</button><code><span class="p">$</span> strata stale --group-by root</code></pre>
+          <h4>Explore</h4>
+          <p>Open the web UI, or ask from the terminal.</p>
+          <pre class="lp-code"><button class="lp-copy" aria-label="Copy">{% include ".icons/material/content-copy.svg" %}</button><code><span class="p">$</span> strata ui
+<span class="p">$</span> strata stale --group-by root</code></pre>
         </li>
       </ol>
     </div>
   </section>
 
-  <section class="lp-section">
+  <section class="lp-section lp-section--alt">
     <div class="lp-wrap">
       <p class="lp-eyebrow">How it works</p>
       <h2>Metadata in.<br><span>A lineage graph out.</span></h2>
@@ -176,7 +262,7 @@ strata query 'stale.base_drift'</code></pre>
     </div>
   </section>
 
-  <section class="lp-section lp-section--alt">
+  <section class="lp-section">
     <div class="lp-wrap">
       <p class="lp-eyebrow">Documentation</p>
       <h2>Go deeper.</h2>
@@ -188,7 +274,7 @@ strata query 'stale.base_drift'</code></pre>
           ("guides/staleness/", "Staleness", "Signals, verdicts and the policy file"),
           ("guides/query-language/", "Query language", "Every field, operator and example"),
           ("guides/footprint/", "Footprint", "Summary, labels, layers and change over time"),
-          ("guides/serving/", "Serving, API and MCP", "strata serve, auth and agents"),
+          ("guides/serving/", "Web UI, API and MCP", "strata ui, strata serve, auth and agents"),
           ("reference/commands/strata/", "Command reference", "Generated from the CLI"),
         ] %}
         <a class="lp-doc" href="{{ path | url }}">
