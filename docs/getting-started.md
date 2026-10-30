@@ -6,7 +6,7 @@ Install strata, verify the download, and index a registry. If you don't have a r
 
 === "Release archive"
 
-    Download the archive for your platform from [GitHub Releases](https://github.com/rossedman/strata/releases): Linux (amd64, arm64), macOS (amd64, arm64) or Windows (amd64). Unpack it and put `strata` on your `PATH`.
+    Download the archive for your platform from [GitHub Releases](https://github.com/rossedman/strata/releases): Linux (amd64, arm64), or macOS (amd64, arm64). Windows is not supported. Unpack it and put `strata` on your `PATH`.
 
 === "go install"
 

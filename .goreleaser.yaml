@@ -9,7 +9,8 @@ before:
 
 # DuckDB is linked through cgo, so each target names its own C and C++
 # compilers. They come from the goreleaser-cross image the release
-# workflow runs in; DuckDB ships no windows/arm64 build.
+# workflow runs in. Windows is not supported: DuckDB's Windows libraries
+# need a UCRT gcc that no Linux cross toolchain provides.
 builds:
   - id: linux-amd64
     goos: [linux]
@@ -39,19 +40,10 @@ builds:
     env: [CGO_ENABLED=1, CC=oa64-clang, CXX=oa64-clang++]
     flags: [-trimpath]
     ldflags: *ldflags
-  - id: windows-amd64
-    goos: [windows]
-    goarch: [amd64]
-    env: [CGO_ENABLED=1, CC=x86_64-w64-mingw32-gcc, CXX=x86_64-w64-mingw32-g++]
-    flags: [-trimpath]
-    ldflags: *ldflags
 
 archives:
   - formats: [tar.gz]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
-    format_overrides:
-      - goos: windows
-        formats: [zip]
     files:
       - LICENSE
       - README.md
