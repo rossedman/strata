@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -56,5 +57,21 @@ func TestCrawlOptionsECR(t *testing.T) {
 	}
 	if _, err := crawlOptions(context.Background(), config.Registry{Host: "reg.io", PushedSince: "nope"}); err == nil {
 		t.Fatal("a bad filter should fail")
+	}
+}
+
+func TestIndexFilterFlagsOnConfiguredRegistries(t *testing.T) {
+	isolate(t)
+	r := testreg.Start(t)
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "strata.yaml")
+	body := "db: " + filepath.Join(dir, "x.duckdb") + "\nregistries:\n  - host: " + r.Host + "\n    insecure: true\n"
+	if err := os.WriteFile(cfg, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out := mustRun(t, "index", "--config", cfg, "--include-repo", "base/**")
+	contains(t, out, "2 repos", "filtered out 2 repos")
+	if _, err := run(t, "index", "--config", cfg, "--pushed-since", "30d"); err == nil {
+		t.Fatal("pushed-since on a plain registry should fail")
 	}
 }

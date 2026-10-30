@@ -367,6 +367,27 @@ type ConfigInfo struct {
 	Workdir     string             `json:"workdir"`
 }
 
+// CrawlStats Running totals of a crawl
+type CrawlStats struct {
+	ImagesFiltered int64 `json:"images_filtered"`
+	NewImages      int64 `json:"new_images"`
+	Referrers      int64 `json:"referrers"`
+
+	// Repos Repos crawled so far
+	Repos         int64 `json:"repos"`
+	ReposFiltered int64 `json:"repos_filtered"`
+
+	// ReposResumed Repos an earlier run already finished
+	ReposResumed int64 `json:"repos_resumed"`
+
+	// ReposTotal Repos this crawl visits, once listed
+	ReposTotal   int64 `json:"repos_total"`
+	Requests     int64 `json:"requests"`
+	TagMoves     int64 `json:"tag_moves"`
+	Tags         int64 `json:"tags"`
+	TagsFiltered int64 `json:"tags_filtered"`
+}
+
 // DescendantResult A descendant graph and the base versions it starts from
 type DescendantResult struct {
 	// Graph A lineage graph: an ancestry chain, a descendant tree, a query graph or the registry map
@@ -499,6 +520,25 @@ type ImageInfo struct {
 	Size       int64      `json:"size"`
 	Tags       []string   `json:"tags"`
 	TopChainId string     `json:"top_chain_id"`
+}
+
+// IndexStatus State of the running or last index
+type IndexStatus struct {
+	// Crawl Running totals of a crawl
+	Crawl CrawlStats `json:"crawl"`
+
+	// Error Why the last index failed
+	Error      *string    `json:"error,omitempty"`
+	FinishedAt *time.Time `json:"finished_at,omitempty"`
+
+	// RefreshEverySeconds How often views refresh during a crawl; 0 means only at the end
+	RefreshEverySeconds int64 `json:"refresh_every_seconds"`
+
+	// RefreshedAt When lineage, staleness and the views were last recomputed
+	RefreshedAt *time.Time `json:"refreshed_at,omitempty"`
+	Registry    *string    `json:"registry,omitempty"`
+	Running     bool       `json:"running"`
+	StartedAt   *time.Time `json:"started_at,omitempty"`
 }
 
 // LayerInfo One layer and the build step that created it
@@ -1040,6 +1080,15 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/stale (the `GetStale` operationId).
 	GetStale(ctx context.Context, params *GetStaleParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetStatus Progress of the running index
+	//
+	// Whether `strata serve` is crawling, how far it has got, and when the
+	// views were last refreshed. While a long crawl runs, the other UI
+	// endpoints answer from what is indexed so far.
+	//
+	// Corresponds with GET /v1/status (the `GetStatus` operationId).
+	GetStatus(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetSummary Footprint summary of the registry
 	//
 	// Corresponds with GET /v1/summary (the `GetSummary` operationId).
@@ -1245,6 +1294,25 @@ func (c *Client) Search(ctx context.Context, params *SearchParams, reqEditors ..
 // Corresponds with GET /v1/stale (the `GetStale` operationId).
 func (c *Client) GetStale(ctx context.Context, params *GetStaleParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetStaleRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetStatus Progress of the running index
+//
+// Whether `strata serve` is crawling, how far it has got, and when the
+// views were last refreshed. While a long crawl runs, the other UI
+// endpoints answer from what is indexed so far.
+//
+// Corresponds with GET /v1/status (the `GetStatus` operationId).
+func (c *Client) GetStatus(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetStatusRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -2150,6 +2218,33 @@ func NewGetStaleRequest(server string, params *GetStaleParams) (*http.Request, e
 	return req, nil
 }
 
+// NewGetStatusRequest constructs an http.Request for the GetStatus method
+func NewGetStatusRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/status")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGetSummaryRequest constructs an http.Request for the GetSummary method
 func NewGetSummaryRequest(server string, params *GetSummaryParams) (*http.Request, error) {
 	var err error
@@ -2352,6 +2447,17 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /v1/stale (the `GetStale` operationId).
 	GetStaleWithResponse(ctx context.Context, params *GetStaleParams, reqEditors ...RequestEditorFn) (*GetStaleResponse, error)
+
+	// GetStatusWithResponse Progress of the running index
+	//
+	// Whether `strata serve` is crawling, how far it has got, and when the
+	// views were last refreshed. While a long crawl runs, the other UI
+	// endpoints answer from what is indexed so far.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/status (the `GetStatus` operationId).
+	GetStatusWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetStatusResponse, error)
 
 	// GetSummaryWithResponse Footprint summary of the registry
 	//
@@ -3048,6 +3154,54 @@ func (r GetStaleResponse) ContentType() string {
 	return ""
 }
 
+type GetStatusResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *IndexStatus
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetStatusResponse) GetJSON200() *IndexStatus {
+	return r.JSON200
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r GetStatusResponse) GetJSONDefault() *Error {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetStatusResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetStatusResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetStatusResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetStatusResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type GetSummaryResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -3284,6 +3438,23 @@ func (c *ClientWithResponses) GetStaleWithResponse(ctx context.Context, params *
 		return nil, err
 	}
 	return ParseGetStaleResponse(rsp)
+}
+
+// GetStatusWithResponse Progress of the running index
+//
+// Whether `strata serve` is crawling, how far it has got, and when the
+// views were last refreshed. While a long crawl runs, the other UI
+// endpoints answer from what is indexed so far.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/status (the `GetStatus` operationId).
+func (c *ClientWithResponses) GetStatusWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetStatusResponse, error) {
+	rsp, err := c.GetStatus(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetStatusResponse(rsp)
 }
 
 // GetSummaryWithResponse Footprint summary of the registry
@@ -3778,6 +3949,39 @@ func ParseGetStaleResponse(rsp *http.Response) (*GetStaleResponse, error) {
 			return nil, err
 		}
 		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetStatusResponse parses an HTTP response from a GetStatusWithResponse call
+func ParseGetStatusResponse(rsp *http.Response) (*GetStatusResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetStatusResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest IndexStatus
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Error

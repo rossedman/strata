@@ -444,6 +444,38 @@
     if (r.view === "image") { imageView(el, r.params); }
     if (r.view !== "search") { $("q").value = ""; }
   }
+  // ---------- background index ----------
+  // strata serve --reindex-every crawls in the background. While it runs,
+  // every view answers from what is indexed so far; this banner shows the
+  // crawl's progress and offers to reload once the views refresh.
+  var shown = null;
+  function clock(iso) { return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); }
+  function pollStatus() {
+    api("v1/status").then(function (st) {
+      var bar = $("indexing"), c = st.crawl, refreshed = st.refreshed_at || "";
+      if (shown === null) { shown = refreshed; }
+      var newer = refreshed !== shown;
+      bar.classList.toggle("err", !st.running && !!st.error);
+      if (st.running) {
+        var done = c.repos + c.repos_resumed, pct = c.repos_total ? 100 * done / c.repos_total : 0;
+        var secs = st.refresh_every_seconds, every = secs >= 60 ? Math.round(secs / 60) + " min" : secs + " s";
+        bar.innerHTML = "<span>Indexing <b>" + esc(nice(st.registry || "")) + "</b></span>" +
+          '<span class="ibar" aria-hidden="true"><i style="width:' + pct.toFixed(1) + '%"></i></span>' +
+          '<span class="num">' + (c.repos_total ? fmt(done) + " of " + fmt(c.repos_total) + " repos · " : "listing repos · ") + fmt(c.new_images) + " new images</span>" +
+          '<span class="when">' + (refreshed ? "Results as of " + clock(refreshed) : "No results yet") + (secs ? ", refreshing every " + every : ", refreshing when the crawl finishes") + "</span>" +
+          (newer ? '<button type="button" id="ilatest">Show latest</button>' : "");
+      } else if (st.error) {
+        bar.innerHTML = '<span class="err">Indexing ' + esc(nice(st.registry || "")) + " failed: " + esc(st.error) + "</span>" + (newer ? '<button type="button" id="ilatest">Show latest</button>' : "");
+      } else if (newer) {
+        bar.innerHTML = "<span>Indexing finished: <b>" + fmt(c.new_images) + "</b> new images</span>" + '<button type="button" id="ilatest">Show latest</button>';
+      }
+      bar.hidden = !st.running && !st.error && !newer;
+      var b = $("ilatest");
+      if (b) { b.onclick = function () { location.reload(); }; }
+      setTimeout(pollStatus, st.running ? 5000 : 60000);
+    }).catch(function () { setTimeout(pollStatus, 60000); });
+  }
+  pollStatus();
   addEventListener("hashchange", route);
   var rz; addEventListener("resize", function () { clearTimeout(rz); rz = setTimeout(function () { if (!$("v-overview").hidden) { drawIce(); } if (!$("v-lineage").hidden) { paint(); } }, 120); });
   api("v1/overview").then(function (o) { host = o.host || ""; $("foot").innerHTML = "Index<b>" + esc(o.host || "all registries") + "</b>" + (o.indexed_at ? "crawled " + ago(o.indexed_at) : ""); route(); }).catch(function () { route(); });
