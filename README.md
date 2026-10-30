@@ -6,7 +6,7 @@
   <a href="https://goreportcard.com/report/github.com/rossedman/strata"><img alt="Go Report Card" src="https://goreportcard.com/badge/github.com/rossedman/strata"></a>
   <a href="https://github.com/rossedman/strata/releases"><img alt="Release" src="https://img.shields.io/github/v/release/rossedman/strata?include_prereleases&color=a99bff"></a>
   <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-a99bff"></a>
-  <a href="https://rossedman.github.io/strata/"><img alt="Docs" src="https://img.shields.io/badge/docs-rossedman.github.io%2Fstrata-a99bff"></a>
+  <a href="https://rossedman.io/strata/"><img alt="Docs" src="https://img.shields.io/badge/docs-rossedman.io%2Fstrata-a99bff"></a>
 </p>
 
 strata indexes a container registry into one local DuckDB file and answers three questions about any image:
@@ -62,15 +62,15 @@ strata serve                                      # web UI, JSON API and MCP for
 strata mcp                                        # MCP over stdio for a local agent
 ```
 
-No registry handy? `go run ./examples/demo-registry` starts one seeded with realistic images; the [getting-started guide](https://rossedman.github.io/strata/getting-started/) walks through it.
+No registry handy? `go run ./examples/demo-registry` starts one seeded with realistic images; the [getting-started guide](https://rossedman.io/strata/getting-started/) walks through it.
 
 ## Configuration
 
-Settings resolve flag first, then `STRATA_*` environment variables, then `strata.yaml`, then defaults. The config file is found at `$XDG_CONFIG_HOME/strata/strata.yaml`, `~/.config/strata/strata.yaml`, `~/.strata.yaml` or `./strata.yaml`. See [Configuration](https://rossedman.github.io/strata/configuration/) for every key.
+Settings resolve flag first, then `STRATA_*` environment variables, then `strata.yaml`, then defaults. The config file is found at `$XDG_CONFIG_HOME/strata/strata.yaml`, `~/.config/strata/strata.yaml`, `~/.strata.yaml` or `./strata.yaml`. See [Configuration](https://rossedman.io/strata/configuration/) for every key.
 
 ## Documentation
 
-Everything else is at **[rossedman.github.io/strata](https://rossedman.github.io/strata/)**: how [lineage](https://rossedman.github.io/strata/guides/lineage/) and [staleness](https://rossedman.github.io/strata/guides/staleness/) work, the [query language](https://rossedman.github.io/strata/guides/query-language/), [graphs](https://rossedman.github.io/strata/guides/graphs/), [serving and MCP](https://rossedman.github.io/strata/guides/serving/), and the generated command and API reference.
+Everything else is at **[rossedman.io/strata](https://rossedman.io/strata/)**: how [lineage](https://rossedman.io/strata/guides/lineage/) and [staleness](https://rossedman.io/strata/guides/staleness/) work, the [query language](https://rossedman.io/strata/guides/query-language/), [graphs](https://rossedman.io/strata/guides/graphs/), [serving and MCP](https://rossedman.io/strata/guides/serving/), and the generated command and API reference.
 
 ## Contributing
 

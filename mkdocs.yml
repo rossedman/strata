@@ -1,6 +1,6 @@
 site_name: strata
 site_description: Every image's lineage and staleness, from registry metadata alone.
-site_url: https://rossedman.github.io/strata/
+site_url: https://rossedman.io/strata/
 repo_url: https://github.com/rossedman/strata
 repo_name: rossedman/strata
 edit_uri: edit/main/docs/
