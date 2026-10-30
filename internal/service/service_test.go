@@ -19,6 +19,7 @@ import (
 	"github.com/rossedman/strata/internal/crawl"
 	"github.com/rossedman/strata/internal/fixture"
 	"github.com/rossedman/strata/internal/graph"
+	"github.com/rossedman/strata/internal/store"
 	"github.com/rossedman/strata/internal/testreg"
 )
 
@@ -569,19 +570,57 @@ func BenchmarkResolve(b *testing.B) {
 	}
 }
 
-// BenchmarkRefresh recomputes lineage, staleness and the materialized
-// views over a 50,000-image index, which is what every index run and every
-// refresh during a background crawl pays.
+// BenchmarkRefresh measures a refresh of a 10,000- and a 50,000-image
+// index three ways: in full, as after the first crawl; with nothing
+// changed; and after a typical re-crawl brings 100 new images and moves 50
+// tags.
 func BenchmarkRefresh(b *testing.B) {
 	for _, n := range []int{10_000, 50_000} {
 		b.Run(fmt.Sprintf("images=%d", n), func(b *testing.B) {
-			svc := New(fixture.Open(b, fixture.Org(n)))
-			for b.Loop() {
-				if err := svc.Refresh(ctx); err != nil {
-					b.Fatal(err)
+			st := fixture.Open(b, fixture.Org(n))
+			svc := New(st)
+			b.Run("full", func(b *testing.B) {
+				for b.Loop() {
+					b.StopTimer()
+					forceFull(b, svc)
+					b.StartTimer()
+					if err := svc.Refresh(ctx); err != nil {
+						b.Fatal(err)
+					}
 				}
-			}
-			b.ReportMetric(float64(n)*float64(b.N)/b.Elapsed().Seconds(), "images/s")
+				b.ReportMetric(float64(n)*float64(b.N)/b.Elapsed().Seconds(), "images/s")
+			})
+			b.Run("unchanged", func(b *testing.B) {
+				for b.Loop() {
+					if err := svc.Refresh(ctx); err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
+			b.Run("changes=100", func(b *testing.B) {
+				round := 0
+				for b.Loop() {
+					b.StopTimer()
+					round++
+					batch := &store.Batch{}
+					for i := range 100 {
+						img := fixture.Image(fmt.Sprintf("bench-%d-%d", round, i), fmt.Sprintf("reg/team-%d/app-%d", i%25, i), "os-0", "lang-0-0", fmt.Sprintf("bench-%d-%d", round, i))
+						batch.Images = append(batch.Images, img)
+						if i < 50 {
+							t := fixture.Tag(img, "v0", round)
+							batch.Tags = append(batch.Tags, t)
+							batch.Events = append(batch.Events, fixture.Event(t.Repo, t.Tag, t.Digest, round))
+						}
+					}
+					if err := st.Write(ctx, batch); err != nil {
+						b.Fatal(err)
+					}
+					b.StartTimer()
+					if err := svc.Refresh(ctx); err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
 		})
 	}
 }

@@ -2,6 +2,7 @@ package stale
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -236,10 +237,10 @@ func TestRecompute(t *testing.T) {
 		Referrers: []model.Referrer{{Subject: app.Digest, Digest: fixture.Digest("sbom"), ArtifactType: "application/spdx+json", Kind: model.KindSBOM}},
 	}
 	s := fixture.Open(t, b)
-	if err := lineage.Recompute(ctx, s.DB(), lineage.Options{}); err != nil {
+	if _, err := lineage.Recompute(ctx, s.DB(), lineage.Options{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := Recompute(ctx, s.DB(), DefaultPolicy(), now); err != nil {
+	if _, err := Recompute(ctx, s.DB(), DefaultPolicy(), now); err != nil {
 		t.Fatal(err)
 	}
 	got := map[string]string{}
@@ -267,7 +268,7 @@ func TestRecompute(t *testing.T) {
 			t.Errorf("%s: verdict %s, want %s", d, got[d], v)
 		}
 	}
-	if err := Recompute(ctx, s.DB(), DefaultPolicy(), time.Now()); err != nil {
+	if _, err := Recompute(ctx, s.DB(), DefaultPolicy(), time.Now()); err != nil {
 		t.Fatalf("second recompute: %v", err)
 	}
 }
@@ -277,7 +278,7 @@ func TestRecomputeErrors(t *testing.T) {
 	s := fixture.Open(t, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := Recompute(ctx, s.DB(), DefaultPolicy(), now); err == nil {
+	if _, err := Recompute(ctx, s.DB(), DefaultPolicy(), now); err == nil {
 		t.Fatal("Recompute ran on a canceled context")
 	}
 }
@@ -292,5 +293,32 @@ func BenchmarkEvaluate(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
 		ev.Evaluate(f)
+	}
+}
+
+// TestWriteLargeIndex writes more verdicts than fit in one DuckDB row
+// group, where staging inside a transaction loses them (see store.Stage).
+func TestWriteLargeIndex(t *testing.T) {
+	t.Parallel()
+	s := fixture.Open(t, nil)
+	const n = 130_000
+	results := make([]Result, n)
+	for i := range results {
+		results[i] = Result{Digest: fmt.Sprintf("sha256:%064d", i), Verdict: "fresh", Reasons: []string{}}
+	}
+	changed, err := write(context.Background(), s.DB(), results, time.Now())
+	if err != nil || len(changed) != n {
+		t.Fatalf("first write changed %d, %v", len(changed), err)
+	}
+	results[5].Verdict = "stale"
+	if changed, err = write(context.Background(), s.DB(), results, time.Now()); err != nil || len(changed) != 1 {
+		t.Fatalf("second write changed %d, %v", len(changed), err)
+	}
+	var stored, stale int
+	if err := s.DB().QueryRow(`SELECT count(*), count(*) FILTER (WHERE verdict = 'stale') FROM staleness`).Scan(&stored, &stale); err != nil {
+		t.Fatal(err)
+	}
+	if stored != n || stale != 1 {
+		t.Fatalf("stored %d verdicts, %d stale", stored, stale)
 	}
 }

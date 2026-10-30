@@ -159,52 +159,131 @@ func (s *Store) Write(ctx context.Context, b *Batch) error {
 		err = deleteTags(ctx, conn, b.DeleteTags)
 	}
 	if err != nil {
-		_, _ = conn.ExecContext(ctx, "ROLLBACK")
+		_, _ = conn.ExecContext(context.WithoutCancel(ctx), "ROLLBACK")
 		return err
 	}
-	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+	if _, err := conn.ExecContext(context.WithoutCancel(ctx), "COMMIT"); err != nil {
 		return fmt.Errorf("commit: %w", err)
 	}
 	return nil
 }
 
-// ReplaceRows deletes with del and bulk-loads rows into table in one
-// transaction, through the appender rather than one statement per row.
-func (s *Store) ReplaceRows(ctx context.Context, del string, delArgs []any, table string, rows [][]any) error {
+// MergeRows makes the rows of table that match scope equal to rows, in
+// one transaction. It bulk-loads rows into a staging table and writes only
+// the differences: rows to remove, and rows to add or change, matched on
+// the key columns. Rewriting rows that did not change is what makes a
+// delete-and-reload slow on a table with a primary key. It returns how
+// many rows it removed or wrote.
+func (s *Store) MergeRows(ctx context.Context, table, scope string, scopeArgs []any, keys []string, rows [][]any) (int, error) {
 	conn, err := s.db.Conn(ctx)
 	if err != nil {
-		return fmt.Errorf("acquire connection: %w", err)
+		return 0, fmt.Errorf("acquire connection: %w", err)
 	}
 	defer func() { _ = conn.Close() }()
+	if err := Stage(ctx, conn, "merge_staged", table, func(a *duckdb.Appender) error {
+		vals := make([]driver.Value, 0, 8)
+		for _, r := range rows {
+			vals = vals[:0]
+			for _, v := range r {
+				vals = append(vals, v)
+			}
+			if err := a.AppendRow(vals...); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		return 0, err
+	}
 	if _, err := conn.ExecContext(ctx, "BEGIN TRANSACTION"); err != nil {
-		return fmt.Errorf("begin: %w", err)
+		return 0, fmt.Errorf("begin: %w", err)
 	}
-	_, err = conn.ExecContext(ctx, del, delArgs...)
-	if err == nil && len(rows) > 0 {
-		err = conn.Raw(func(dc any) error {
-			return appendTo(dc.(driver.Conn), table, "INSERT INTO "+table+" SELECT * FROM appended_data", func(a *duckdb.Appender) error {
-				vals := make([]driver.Value, 0, 8)
-				for _, r := range rows {
-					vals = vals[:0]
-					for _, v := range r {
-						vals = append(vals, v)
-					}
-					if err := a.AppendRow(vals...); err != nil {
-						return err
-					}
-				}
-				return nil
-			})
-		})
-	}
+	n, err := mergeStaged(ctx, conn, table, scope, scopeArgs, keys)
 	if err != nil {
-		_, _ = conn.ExecContext(ctx, "ROLLBACK")
+		_, _ = conn.ExecContext(context.WithoutCancel(ctx), "ROLLBACK")
+		return 0, err
+	}
+	if _, err := conn.ExecContext(context.WithoutCancel(ctx), "COMMIT"); err != nil {
+		return 0, fmt.Errorf("commit: %w", err)
+	}
+	return n, nil
+}
+
+// Stage creates a temporary table named temp with like's columns and
+// bulk-loads it through the appender. Callers compare staged rows with
+// stored ones and write the difference.
+func Stage(ctx context.Context, conn *sql.Conn, temp, like string, rows func(a *duckdb.Appender) error) error {
+	if err := CreateTempLike(ctx, conn, temp, like); err != nil {
 		return err
 	}
-	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
-		return fmt.Errorf("commit: %w", err)
+	return conn.Raw(func(dc any) error {
+		return appendTo(dc.(driver.Conn), temp, "INSERT INTO "+temp+" SELECT * FROM appended_data", rows)
+	})
+}
+
+// CreateTempLike creates (or replaces) an empty temporary table named
+// temp with the columns and types of table like, declared explicitly.
+//
+// It does not use CREATE TABLE ... AS SELECT ... LIMIT 0. In DuckDB 2.0,
+// a table created that way inside a transaction and then filled past one
+// row group (122,880 rows) is invisible to semi-joins and EXCEPT until the
+// transaction commits, so a diff against it silently comes out empty.
+// TestCreateTempLikeLarge guards against this.
+func CreateTempLike(ctx context.Context, conn *sql.Conn, temp, like string) error {
+	rows, err := conn.QueryContext(ctx, `SELECT column_name, data_type FROM information_schema.columns
+		WHERE table_name = ? AND table_schema = 'main' ORDER BY ordinal_position`, like)
+	if err != nil {
+		return fmt.Errorf("columns of %s: %w", like, err)
+	}
+	var cols []string
+	for rows.Next() {
+		var name, typ string
+		if err := rows.Scan(&name, &typ); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		cols = append(cols, `"`+name+`" `+typ)
+	}
+	_ = rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(cols) == 0 {
+		return fmt.Errorf("columns of %s: no such table", like)
+	}
+	if _, err := conn.ExecContext(ctx, "CREATE OR REPLACE TEMP TABLE "+temp+" ("+strings.Join(cols, ", ")+")"); err != nil {
+		return fmt.Errorf("create %s like %s: %w", temp, like, err)
 	}
 	return nil
+}
+
+// mergeStaged writes the differences between merge_staged and the rows of
+// table in scope, inside the caller's transaction.
+func mergeStaged(ctx context.Context, conn *sql.Conn, table, scope string, scopeArgs []any, keys []string) (int, error) {
+	match := make([]string, len(keys))
+	for i, k := range keys {
+		match[i] = table + "." + k + " = g." + k
+	}
+	current := "SELECT * FROM " + table + " WHERE " + scope
+	stmts := []struct {
+		q    string
+		args []any
+	}{
+		{"CREATE OR REPLACE TEMP TABLE merge_gone AS " + current + " EXCEPT SELECT * FROM merge_staged", scopeArgs},
+		{"CREATE OR REPLACE TEMP TABLE merge_added AS SELECT * FROM merge_staged EXCEPT " + current, scopeArgs},
+		{"DELETE FROM " + table + " USING merge_gone g WHERE " + strings.Join(match, " AND "), nil},
+		{"INSERT INTO " + table + " SELECT * FROM merge_added", nil},
+	}
+	for _, st := range stmts {
+		if _, err := conn.ExecContext(ctx, st.q, st.args...); err != nil {
+			return 0, fmt.Errorf("merge %s: %w", table, err)
+		}
+	}
+	var n int
+	if err := conn.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM merge_gone) + (SELECT count(*) FROM merge_added)`).Scan(&n); err != nil {
+		return 0, err
+	}
+	return n, nil
 }
 
 // deleteTags removes tags the registry no longer lists.

@@ -1141,6 +1141,19 @@ components:
         repos_filtered: { type: integer, format: int64 }
         tags_filtered: { type: integer, format: int64 }
         images_filtered: { type: integer, format: int64 }
+    RefreshStats:
+      description: "What the last refresh rewrote; refreshes are incremental"
+      type: object
+      required: [full, lineage_skipped, lineage_changed, verdicts_changed, facts_rebuilt, snapshot_rows, snapshot_skipped, duration]
+      properties:
+        full: { type: boolean, description: "Every derived table was rebuilt" }
+        lineage_skipped: { type: boolean, description: "No input to lineage changed" }
+        lineage_changed: { type: integer, description: "Lineage rows rewritten" }
+        verdicts_changed: { type: integer, description: "Staleness rows rewritten" }
+        facts_rebuilt: { type: integer, description: "Image rows rebuilt in the query table; -1 when rebuilt in full" }
+        snapshot_rows: { type: integer, description: "Snapshot rows added, changed or removed" }
+        snapshot_skipped: { type: boolean, description: "No image row changed since today's snapshot" }
+        duration: { type: integer, format: int64, description: "Nanoseconds the refresh took" }
     IndexStatus:
       description: "State of the running or last index"
       type: object
@@ -1161,6 +1174,8 @@ components:
         crawl:
           $ref: "#/components/schemas/CrawlStats"
         error: { type: string, description: "Why the last index failed" }
+        last_refresh:
+          $ref: "#/components/schemas/RefreshStats"
     Change:
       description: "One line of a diff between snapshots"
       type: object

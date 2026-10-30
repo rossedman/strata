@@ -24,6 +24,8 @@ type IndexStatus struct {
 	RefreshEverySeconds int64 `json:"refresh_every_seconds"`
 	// Crawl holds the running totals.
 	Crawl crawl.Stats `json:"crawl"`
+	// LastRefresh says what the last refresh rewrote and how long it took.
+	LastRefresh *RefreshStats `json:"last_refresh,omitempty"`
 	// Error is why the last index failed.
 	Error string `json:"error,omitempty"`
 }

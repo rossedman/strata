@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -234,5 +235,88 @@ func BenchmarkWrite(b *testing.B) {
 		if err := s.Write(ctx, batch); err != nil {
 			b.Fatal(err)
 		}
+	}
+}
+
+// TestMergeRowsLarge merges more rows than fit in one DuckDB
+// row group, where a staging table created the wrong way loses them from
+// EXCEPT and nothing is written; see CreateTempLike.
+func TestMergeRowsLarge(t *testing.T) {
+	t.Parallel()
+	s, err := Open(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Close() }()
+	const n = 130_000
+	day := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	rows := make([][]any, n)
+	for i := range rows {
+		rows[i] = []any{day, "repo", fmt.Sprintf("g%d", i), "images", float64(i)}
+	}
+	keys := []string{"day", "group_by", "group_value", "metric"}
+	merge := func() int {
+		t.Helper()
+		got, err := s.MergeRows(ctx, "snapshots", "day = ?", []any{"2026-01-01"}, keys, rows)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	if got := merge(); got != n {
+		t.Fatalf("first merge wrote %d rows, want %d", got, n)
+	}
+	rows[7][4] = float64(-1)
+	rows = rows[1:]
+	// One value changed and one row dropped: two rows out, one back in.
+	if got := merge(); got != 3 {
+		t.Fatalf("second merge changed %d rows, want 3", got)
+	}
+	var stored int
+	var v float64
+	if err := s.DB().QueryRow(`SELECT count(*), sum(value) FILTER (WHERE group_value = 'g7') FROM snapshots`).Scan(&stored, &v); err != nil {
+		t.Fatal(err)
+	}
+	if stored != n-1 || v != -1 {
+		t.Fatalf("stored %d rows, g7 = %v", stored, v)
+	}
+}
+
+// TestCreateTempLikeLarge fills a table made by CreateTempLike past one
+// row group inside a transaction and checks that a semi-join still sees
+// every row, which a CREATE TABLE ... AS SELECT ... LIMIT 0 table does not.
+func TestCreateTempLikeLarge(t *testing.T) {
+	t.Parallel()
+	s, err := Open(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Close() }()
+	conn, err := s.DB().Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	if _, err := conn.ExecContext(ctx, `BEGIN TRANSACTION`); err != nil {
+		t.Fatal(err)
+	}
+	if err := CreateTempLike(ctx, conn, "staged_tags", "tags"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.ExecContext(ctx, `INSERT INTO staged_tags SELECT 'r', 't' || i, 'd' || i, now() FROM range(300000) t(i)`); err != nil {
+		t.Fatal(err)
+	}
+	var seen int
+	if err := conn.QueryRowContext(ctx, `SELECT count(*) FROM range(300000) t(i) WHERE 'd' || i IN (SELECT digest FROM staged_tags)`).Scan(&seen); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.ExecContext(ctx, `COMMIT`); err != nil {
+		t.Fatal(err)
+	}
+	if seen != 300000 {
+		t.Fatalf("semi-join saw %d of 300000 staged rows", seen)
+	}
+	if err := CreateTempLike(ctx, conn, "x", "no_such_table"); err == nil {
+		t.Fatal("a missing table should fail")
 	}
 }

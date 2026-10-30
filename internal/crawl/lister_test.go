@@ -117,7 +117,7 @@ func TestCrawlWithLister(t *testing.T) {
 		t.Fatal("first_seen is unset")
 	}
 	// Pulls of an index count for its platform images.
-	if err := stale.Recompute(ctx, s.DB(), stale.DefaultPolicy(), now); err != nil {
+	if _, err := stale.Recompute(ctx, s.DB(), stale.DefaultPolicy(), now); err != nil {
 		t.Fatal(err)
 	}
 	if n := count(t, s, `SELECT count(*) FROM image_view WHERE stale_last_pulled_days IS NOT NULL`); n != 4 {
