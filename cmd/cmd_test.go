@@ -204,6 +204,8 @@ func TestCommandErrors(t *testing.T) {
 		{"history", "export", "--db", db, "/nope/dir/x.parquet"},
 		{"serve", "--db", db, "--addr", "0.0.0.0:0"},
 		{"serve", "--db", db, "--addr", "nope"},
+		{"ui", "--db", db, "--addr", "0.0.0.0:0"},
+		{"ui", "--db", db, "--addr", "nope"},
 		{"version", "--log-level", "loud"},
 		{"version", "--config", "/nope/strata.yaml"},
 		{"refresh", "--db", "/dev/null/x.duckdb"},
@@ -295,8 +297,9 @@ func TestServeAndRemote(t *testing.T) {
 	if _, err := run(t, "stale", "--server", "http://127.0.0.1:1"); err == nil {
 		t.Fatal("unreachable server succeeded")
 	}
-	// /openapi.json and /mcp are mounted next to the API.
+	// /openapi.json, /mcp and the web UI are mounted next to the API.
 	contains(t, get(t, srv.URL+"/openapi.json"), `"openapi"`)
+	contains(t, get(t, srv.URL+"/"), `<script src="app.js">`)
 
 	authed, err := serveHandler(e.Svc, "X-User")
 	if err != nil {
@@ -383,4 +386,28 @@ func status(t *testing.T, url string) int {
 	}
 	_ = res.Body.Close()
 	return res.StatusCode
+}
+
+func TestUIRuns(t *testing.T) {
+	isolate(t)
+	e := testenv.IndexedFile(t)
+	reset(rootCmd)
+	ctx, cancel := context.WithCancel(context.Background())
+	var out bytes.Buffer
+	rootCmd.SetOut(&out)
+	rootCmd.SetErr(&out)
+	rootCmd.SetArgs([]string{"ui", "--db", e.DB, "--addr", "127.0.0.1:0"})
+	done := make(chan error, 1)
+	go func() { done <- rootCmd.ExecuteContext(ctx) }()
+	time.Sleep(500 * time.Millisecond)
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("ui: %v\n%s", err, out.String())
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("ui did not stop")
+	}
+	contains(t, out.String(), "serving", "ui=http://127.0.0.1:")
 }

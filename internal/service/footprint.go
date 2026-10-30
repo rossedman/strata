@@ -54,7 +54,7 @@ func (s *Service) Summary(ctx context.Context, groupBy string) (*Summary, error)
 			return nil, err
 		}
 	}
-	rows, err := s.db().QueryContext(ctx, `SELECT platform, count(*) FROM image_view GROUP BY 1 ORDER BY 2 DESC`)
+	rows, err := s.db().QueryContext(ctx, `SELECT platform, count(*) FROM `+s.view()+` GROUP BY 1 ORDER BY 2 DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -72,7 +72,7 @@ func (s *Service) Summary(ctx context.Context, groupBy string) (*Summary, error)
 		out.Compliance = map[string]float64{}
 		for _, k := range s.Required {
 			var pct sql.NullFloat64
-			err := s.db().QueryRowContext(ctx, `SELECT round(100.0 * count(*) FILTER (WHERE labels[?] IS NOT NULL) / nullif(count(*), 0), 1) FROM image_view`, k).Scan(&pct)
+			err := s.db().QueryRowContext(ctx, `SELECT round(100.0 * count(*) FILTER (WHERE labels[?] IS NOT NULL) / nullif(count(*), 0), 1) FROM `+s.view()+``, k).Scan(&pct)
 			if err != nil {
 				return nil, fmt.Errorf("required label %s: %w", k, err)
 			}
@@ -89,7 +89,7 @@ func (s *Service) groupMetrics(ctx context.Context, groupBy string) ([]GroupMetr
 		return nil, input(err)
 	}
 	q := `
-		WITH g AS (SELECT *, coalesce(CAST(` + g + ` AS VARCHAR), '(none)') AS grp FROM image_view),
+		WITH g AS (SELECT *, coalesce(CAST(` + g + ` AS VARCHAR), '(none)') AS grp FROM ` + s.view() + `),
 		bl AS (SELECT DISTINCT g.grp, il.blob_digest, il.size FROM image_layers il JOIN g ON g.digest = il.digest),
 		bc AS (SELECT blob_digest, count(DISTINCT grp) AS n FROM bl GROUP BY 1),
 		bytes AS (
@@ -194,7 +194,7 @@ type LabelDetail struct {
 // Label profiles a single key.
 func (s *Service) Label(ctx context.Context, key string) (*LabelDetail, error) {
 	d := &LabelDetail{Key: key, Values: map[string]int64{}, Lacking: map[string]int64{}}
-	rows, err := s.db().QueryContext(ctx, `SELECT labels[?]::VARCHAR, count(*) FROM image_view WHERE labels[?] IS NOT NULL GROUP BY 1`, key, key)
+	rows, err := s.db().QueryContext(ctx, `SELECT labels[?]::VARCHAR, count(*) FROM `+s.view()+` WHERE labels[?] IS NOT NULL GROUP BY 1`, key, key)
 	if err != nil {
 		return nil, fmt.Errorf("label values: %w", err)
 	}
@@ -209,7 +209,7 @@ func (s *Service) Label(ctx context.Context, key string) (*LabelDetail, error) {
 		d.Images += n
 	}
 	_ = rows.Close()
-	rows, err = s.db().QueryContext(ctx, `SELECT repo, count(*) FROM image_view WHERE labels[?] IS NULL GROUP BY 1`, key)
+	rows, err = s.db().QueryContext(ctx, `SELECT repo, count(*) FROM `+s.view()+` WHERE labels[?] IS NULL GROUP BY 1`, key)
 	if err != nil {
 		return nil, fmt.Errorf("label gaps: %w", err)
 	}
@@ -224,7 +224,7 @@ func (s *Service) Label(ctx context.Context, key string) (*LabelDetail, error) {
 	}
 	_ = rows.Close()
 	var first, last sql.NullTime
-	if err := s.db().QueryRowContext(ctx, `SELECT min(created), max(created) FROM image_view WHERE labels[?] IS NOT NULL AND year(created) >= 1980`, key).Scan(&first, &last); err != nil {
+	if err := s.db().QueryRowContext(ctx, `SELECT min(created), max(created) FROM `+s.view()+` WHERE labels[?] IS NOT NULL AND year(created) >= 1980`, key).Scan(&first, &last); err != nil {
 		return nil, err
 	}
 	if first.Valid {

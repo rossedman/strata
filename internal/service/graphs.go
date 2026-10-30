@@ -30,7 +30,7 @@ func (s *Service) nodes(ctx context.Context, ids []string) (map[string]graph.Nod
 				CASE WHEN stale_superseded_days IS NOT NULL THEN 'superseded ' || stale_superseded_days || 'd ago' END,
 				CASE WHEN stale_eol_base THEN 'EOL base' END,
 				CASE WHEN stale_label_policy THEN 'label policy' END)
-		FROM image_view WHERE list_contains(?, digest)`, ids)
+		FROM `+s.view()+` WHERE list_contains(?, digest)`, ids)
 	if err != nil {
 		return nil, fmt.Errorf("read nodes: %w", err)
 	}
@@ -391,7 +391,7 @@ func (s *Service) QueryGraph(ctx context.Context, filter string, budget int) (*g
 		budget = graph.DefaultBudget
 	}
 	budget = min(budget, graph.MaxBudget)
-	matched, err := s.strings(ctx, `SELECT digest FROM image_view WHERE `+c.Where+` ORDER BY digest LIMIT `+fmt.Sprint(graph.MaxBudget), c.Args...)
+	matched, err := s.strings(ctx, `SELECT digest FROM `+s.view()+` WHERE `+c.Where+` ORDER BY digest LIMIT `+fmt.Sprint(graph.MaxBudget), c.Args...)
 	if err != nil {
 		return nil, fmt.Errorf("run filter: %w", err)
 	}

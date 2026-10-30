@@ -19,6 +19,8 @@ tags:
     description: Queries and aggregate reports
   - name: system
     description: Server health
+  - name: ui
+    description: Aggregated, paged views that back the web UI
 paths:
   /v1/healthz:
     get:
@@ -258,6 +260,147 @@ paths:
           $ref: "#/components/responses/BadRequest"
         default:
           $ref: "#/components/responses/Error"
+  /v1/overview:
+    get:
+      operationId: getOverview
+      summary: Registry overview for the web UI
+      description: Headline counts, the staleness mix, the root bases holding the most stale images, and changes in the last week.
+      tags: [ui]
+      responses:
+        "200":
+          description: The overview
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Overview"
+        default:
+          $ref: "#/components/responses/Error"
+  /v1/outline:
+    get:
+      operationId: getOutline
+      summary: One level of the lineage outline
+      description: |
+        Children of an outline node. With no parent, the root bases. Children
+        with descendants come back as base rows; leaf images are grouped into
+        one row per repo, and a repo row's children are its images, paged.
+      tags: [ui]
+      parameters:
+        - name: parent
+          in: query
+          required: false
+          description: Outline row id to expand; empty for the roots
+          schema:
+            type: string
+        - name: only_stale
+          in: query
+          required: false
+          description: Only rows holding stale or abandoned images
+          schema:
+            type: boolean
+            default: false
+        - $ref: "#/components/parameters/Offset"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: The children
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Outline"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        default:
+          $ref: "#/components/responses/Error"
+  /v1/search:
+    get:
+      operationId: search
+      summary: Filter images with facet counts
+      description: |
+        Runs a filter, applies the selected facet values, and returns one page
+        of images plus counts for every facet. Each facet's counts apply every
+        selection except its own, so choosing a value never hides the others.
+      tags: [ui]
+      parameters:
+        - $ref: "#/components/parameters/Filter"
+        - name: team
+          in: query
+          required: false
+          description: Selected label.team values
+          style: form
+          explode: true
+          schema: { type: array, items: { type: string } }
+        - name: root
+          in: query
+          required: false
+          description: Selected root bases
+          style: form
+          explode: true
+          schema: { type: array, items: { type: string } }
+        - name: verdict
+          in: query
+          required: false
+          description: Selected verdicts
+          style: form
+          explode: true
+          schema: { type: array, items: { type: string } }
+        - name: platform
+          in: query
+          required: false
+          description: Selected platforms
+          style: form
+          explode: true
+          schema: { type: array, items: { type: string } }
+        - name: age
+          in: query
+          required: false
+          description: Selected age buckets
+          style: form
+          explode: true
+          schema:
+            type: array
+            items:
+              type: string
+              enum: ["< 30 days", "30–180 days", "180 days–1 year", "> 1 year", "unknown"]
+        - $ref: "#/components/parameters/Offset"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: A page of matches and the facet counts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        default:
+          $ref: "#/components/responses/Error"
+  /v1/map:
+    get:
+      operationId: getMap
+      summary: Aggregated registry map
+      description: Root bases and up to three levels below them, leaf images grouped by repo, capped to stay drawable at any registry size.
+      tags: [ui]
+      parameters:
+        - name: depth
+          in: query
+          required: false
+          description: Levels below the roots
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 6
+            default: 3
+      responses:
+        "200":
+          description: The map nodes
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/OutlineRow"
+        default:
+          $ref: "#/components/responses/Error"
 components:
   parameters:
     Ref:
@@ -300,6 +443,25 @@ components:
         minimum: 1
         maximum: 20000
         default: 500
+    Offset:
+      name: offset
+      in: query
+      required: false
+      description: Rows to skip
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
+    Limit:
+      name: limit
+      in: query
+      required: false
+      description: Rows to return
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 500
+        default: 50
   responses:
     Error:
       description: "Unexpected error"
@@ -762,3 +924,177 @@ components:
           type: array
           items:
             type: string
+    VerdictCounts:
+      description: "Images per verdict"
+      type: object
+      required: [fresh, drifting, stale, abandoned]
+      properties:
+        fresh: { type: integer, format: int64 }
+        drifting: { type: integer, format: int64 }
+        stale: { type: integer, format: int64 }
+        abandoned: { type: integer, format: int64 }
+    OutlineRow:
+      description: "One row of the lineage outline: a base, a repo group or an image"
+      type: object
+      required: [id, kind, name, images, verdicts, has_children, depth]
+      properties:
+        id:
+          type: string
+          description: Row id; pass it as parent to expand the row
+        parent:
+          type: string
+        kind:
+          type: string
+          enum: [base, external, phantom, unrooted, repo, image]
+        name:
+          type: string
+        repo:
+          type: string
+        team:
+          type: string
+        digest:
+          type: string
+        tags:
+          type: array
+          items: { type: string }
+        verdict:
+          $ref: "#/components/schemas/Verdict"
+        images:
+          type: integer
+          format: int64
+          description: Images in this row's subtree, itself included
+        verdicts:
+          $ref: "#/components/schemas/VerdictCounts"
+        drift:
+          type: integer
+          description: Generations the row's base is behind its tag; for repo rows, the most among its images
+        newest:
+          type: string
+          format: date-time
+          description: Creation time of the newest image in the subtree
+        has_children:
+          type: boolean
+        depth:
+          type: integer
+    Outline:
+      description: "Children of an outline row"
+      type: object
+      required: [rows, total, offset]
+      properties:
+        parent:
+          type: string
+        rows:
+          type: array
+          items:
+            $ref: "#/components/schemas/OutlineRow"
+        total:
+          type: integer
+          format: int64
+          description: Rows at this level before paging
+        offset:
+          type: integer
+    FacetValue:
+      description: "One value of a facet and how many images have it"
+      type: object
+      required: [value, count, selected]
+      properties:
+        value: { type: string }
+        count: { type: integer, format: int64 }
+        selected: { type: boolean }
+    Facet:
+      description: "A field the search can be narrowed by"
+      type: object
+      required: [name, field, values]
+      properties:
+        name: { type: string }
+        field:
+          type: string
+          description: The query-language field the facet filters
+        values:
+          type: array
+          items:
+            $ref: "#/components/schemas/FacetValue"
+    SearchHit:
+      description: "One image in search results"
+      type: object
+      required: [digest, repo, name, tags, platform, verdict, size]
+      properties:
+        digest: { type: string }
+        repo: { type: string }
+        name: { type: string }
+        tags:
+          type: array
+          items: { type: string }
+        team: { type: string }
+        root: { type: string }
+        platform: { type: string }
+        verdict:
+          $ref: "#/components/schemas/Verdict"
+        age_days: { type: integer }
+        size: { type: integer, format: int64 }
+    SearchResult:
+      description: "A page of search hits with facet counts"
+      type: object
+      required: [total, offset, hits, facets, filter]
+      properties:
+        total: { type: integer, format: int64 }
+        offset: { type: integer }
+        filter:
+          type: string
+          description: The filter with every facet selection folded in, as strata query takes it
+        hits:
+          type: array
+          items:
+            $ref: "#/components/schemas/SearchHit"
+        facets:
+          type: array
+          items:
+            $ref: "#/components/schemas/Facet"
+    RootStat:
+      description: "A root base and the stale images built on it"
+      type: object
+      required: [id, name, kind, images, verdicts]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        kind: { type: string }
+        images: { type: integer, format: int64 }
+        verdicts:
+          $ref: "#/components/schemas/VerdictCounts"
+    Overview:
+      description: "Headline numbers for the web UI"
+      type: object
+      required: [images, repos, tags, stacks, apparent_bytes, dedup_bytes, verdicts, roots, changes]
+      properties:
+        host:
+          type: string
+          description: The registry host every image shares, if there is one
+        images: { type: integer, format: int64 }
+        repos: { type: integer, format: int64 }
+        tags: { type: integer, format: int64 }
+        stacks: { type: integer, format: int64 }
+        apparent_bytes: { type: integer, format: int64 }
+        dedup_bytes: { type: integer, format: int64 }
+        verdicts:
+          $ref: "#/components/schemas/VerdictCounts"
+        roots:
+          type: array
+          items:
+            $ref: "#/components/schemas/RootStat"
+        changes:
+          type: array
+          items:
+            $ref: "#/components/schemas/Change"
+        indexed_at:
+          type: string
+          format: date-time
+    Change:
+      description: "One line of a diff between snapshots"
+      type: object
+      required: [kind, group, from, to]
+      properties:
+        kind: { type: string }
+        group: { type: string }
+        metric: { type: string }
+        from: { type: number }
+        to: { type: number }

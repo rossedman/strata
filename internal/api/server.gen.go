@@ -36,6 +36,15 @@ type ServerInterface interface {
 	// GetImage Explain one image
 	// (GET /v1/images/{digest})
 	GetImage(w http.ResponseWriter, r *http.Request, digest string, params GetImageParams)
+	// GetMap Aggregated registry map
+	// (GET /v1/map)
+	GetMap(w http.ResponseWriter, r *http.Request, params GetMapParams)
+	// GetOutline One level of the lineage outline
+	// (GET /v1/outline)
+	GetOutline(w http.ResponseWriter, r *http.Request, params GetOutlineParams)
+	// GetOverview Registry overview for the web UI
+	// (GET /v1/overview)
+	GetOverview(w http.ResponseWriter, r *http.Request)
 	// RunQuery Filter images with the query language
 	// (GET /v1/query)
 	RunQuery(w http.ResponseWriter, r *http.Request, params RunQueryParams)
@@ -48,6 +57,9 @@ type ServerInterface interface {
 	// GetRoots List root bases and their descendant counts
 	// (GET /v1/roots)
 	GetRoots(w http.ResponseWriter, r *http.Request)
+	// Search Filter images with facet counts
+	// (GET /v1/search)
+	Search(w http.ResponseWriter, r *http.Request, params SearchParams)
 	// GetStale Report the staleness mix
 	// (GET /v1/stale)
 	GetStale(w http.ResponseWriter, r *http.Request, params GetStaleParams)
@@ -252,6 +264,125 @@ func (siw *ServerInterfaceWrapper) GetImage(w http.ResponseWriter, r *http.Reque
 	handler.ServeHTTP(w, r)
 }
 
+// GetMap operation middleware
+func (siw *ServerInterfaceWrapper) GetMap(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetMapParams
+
+	// ------------- Optional query parameter "depth" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "depth", r.URL.Query(), &params.Depth, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "depth"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "depth", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetMap(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetOutline operation middleware
+func (siw *ServerInterfaceWrapper) GetOutline(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetOutlineParams
+
+	// ------------- Optional query parameter "parent" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "parent", r.URL.Query(), &params.Parent, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "parent"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "parent", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "only_stale" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "only_stale", r.URL.Query(), &params.OnlyStale, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "only_stale"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "only_stale", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "offset" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "offset", r.URL.Query(), &params.Offset, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "offset"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "offset", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetOutline(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetOverview operation middleware
+func (siw *ServerInterfaceWrapper) GetOverview(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetOverview(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // RunQuery operation middleware
 func (siw *ServerInterfaceWrapper) RunQuery(w http.ResponseWriter, r *http.Request) {
 
@@ -434,6 +565,130 @@ func (siw *ServerInterfaceWrapper) GetRoots(w http.ResponseWriter, r *http.Reque
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetRoots(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// Search operation middleware
+func (siw *ServerInterfaceWrapper) Search(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params SearchParams
+
+	// ------------- Optional query parameter "filter" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "filter", r.URL.Query(), &params.Filter, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "filter"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "filter", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "team" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "team", r.URL.Query(), &params.Team, runtime.BindQueryParameterOptions{Type: "array", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "team"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "root" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "root", r.URL.Query(), &params.Root, runtime.BindQueryParameterOptions{Type: "array", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "root"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "root", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "verdict" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "verdict", r.URL.Query(), &params.Verdict, runtime.BindQueryParameterOptions{Type: "array", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "verdict"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "verdict", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "platform" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "platform", r.URL.Query(), &params.Platform, runtime.BindQueryParameterOptions{Type: "array", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "platform"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "platform", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "age" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "age", r.URL.Query(), &params.Age, runtime.BindQueryParameterOptions{Type: "array", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "age"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "age", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "offset" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "offset", r.URL.Query(), &params.Offset, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "offset"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "offset", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.Search(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -639,6 +894,10 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/stale", wrapper.GetStale)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/roots", wrapper.GetRoots)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/summary", wrapper.GetSummary)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/overview", wrapper.GetOverview)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/outline", wrapper.GetOutline)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/search", wrapper.Search)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/map", wrapper.GetMap)
 
 	return m
 }
@@ -847,6 +1106,136 @@ func (response GetImagedefaultJSONResponse) VisitGetImageResponse(w http.Respons
 	return err
 }
 
+type GetMapRequestObject struct {
+	Params GetMapParams
+}
+
+type GetMapResponseObject interface {
+	VisitGetMapResponse(w http.ResponseWriter) error
+}
+
+type GetMap200JSONResponse []OutlineRow
+
+func (response GetMap200JSONResponse) VisitGetMapResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetMapdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response GetMapdefaultJSONResponse) VisitGetMapResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetOutlineRequestObject struct {
+	Params GetOutlineParams
+}
+
+type GetOutlineResponseObject interface {
+	VisitGetOutlineResponse(w http.ResponseWriter) error
+}
+
+type GetOutline200JSONResponse Outline
+
+func (response GetOutline200JSONResponse) VisitGetOutlineResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetOutline400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response GetOutline400JSONResponse) VisitGetOutlineResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetOutlinedefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response GetOutlinedefaultJSONResponse) VisitGetOutlineResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetOverviewRequestObject struct {
+}
+
+type GetOverviewResponseObject interface {
+	VisitGetOverviewResponse(w http.ResponseWriter) error
+}
+
+type GetOverview200JSONResponse Overview
+
+func (response GetOverview200JSONResponse) VisitGetOverviewResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetOverviewdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response GetOverviewdefaultJSONResponse) VisitGetOverviewResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type RunQueryRequestObject struct {
 	Params RunQueryParams
 }
@@ -1044,6 +1433,59 @@ func (response GetRootsdefaultJSONResponse) VisitGetRootsResponse(w http.Respons
 	return err
 }
 
+type SearchRequestObject struct {
+	Params SearchParams
+}
+
+type SearchResponseObject interface {
+	VisitSearchResponse(w http.ResponseWriter) error
+}
+
+type Search200JSONResponse SearchResult
+
+func (response Search200JSONResponse) VisitSearchResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type Search400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response Search400JSONResponse) VisitSearchResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SearchdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response SearchdefaultJSONResponse) VisitSearchResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GetStaleRequestObject struct {
 	Params GetStaleParams
 }
@@ -1164,6 +1606,15 @@ type StrictServerInterface interface {
 	// GetImage Explain one image
 	// (GET /v1/images/{digest})
 	GetImage(ctx context.Context, request GetImageRequestObject) (GetImageResponseObject, error)
+	// GetMap Aggregated registry map
+	// (GET /v1/map)
+	GetMap(ctx context.Context, request GetMapRequestObject) (GetMapResponseObject, error)
+	// GetOutline One level of the lineage outline
+	// (GET /v1/outline)
+	GetOutline(ctx context.Context, request GetOutlineRequestObject) (GetOutlineResponseObject, error)
+	// GetOverview Registry overview for the web UI
+	// (GET /v1/overview)
+	GetOverview(ctx context.Context, request GetOverviewRequestObject) (GetOverviewResponseObject, error)
 	// RunQuery Filter images with the query language
 	// (GET /v1/query)
 	RunQuery(ctx context.Context, request RunQueryRequestObject) (RunQueryResponseObject, error)
@@ -1176,6 +1627,9 @@ type StrictServerInterface interface {
 	// GetRoots List root bases and their descendant counts
 	// (GET /v1/roots)
 	GetRoots(ctx context.Context, request GetRootsRequestObject) (GetRootsResponseObject, error)
+	// Search Filter images with facet counts
+	// (GET /v1/search)
+	Search(ctx context.Context, request SearchRequestObject) (SearchResponseObject, error)
 	// GetStale Report the staleness mix
 	// (GET /v1/stale)
 	GetStale(ctx context.Context, request GetStaleRequestObject) (GetStaleResponseObject, error)
@@ -1326,6 +1780,82 @@ func (sh *strictHandler) GetImage(w http.ResponseWriter, r *http.Request, digest
 	}
 }
 
+// GetMap operation middleware
+func (sh *strictHandler) GetMap(w http.ResponseWriter, r *http.Request, params GetMapParams) {
+	var request GetMapRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetMap(ctx, request.(GetMapRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetMap")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetMapResponseObject); ok {
+		if err := validResponse.VisitGetMapResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetOutline operation middleware
+func (sh *strictHandler) GetOutline(w http.ResponseWriter, r *http.Request, params GetOutlineParams) {
+	var request GetOutlineRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetOutline(ctx, request.(GetOutlineRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetOutline")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetOutlineResponseObject); ok {
+		if err := validResponse.VisitGetOutlineResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetOverview operation middleware
+func (sh *strictHandler) GetOverview(w http.ResponseWriter, r *http.Request) {
+	var request GetOverviewRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetOverview(ctx, request.(GetOverviewRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetOverview")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetOverviewResponseObject); ok {
+		if err := validResponse.VisitGetOverviewResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // RunQuery operation middleware
 func (sh *strictHandler) RunQuery(w http.ResponseWriter, r *http.Request, params RunQueryParams) {
 	var request RunQueryRequestObject
@@ -1428,6 +1958,32 @@ func (sh *strictHandler) GetRoots(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// Search operation middleware
+func (sh *strictHandler) Search(w http.ResponseWriter, r *http.Request, params SearchParams) {
+	var request SearchRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.Search(ctx, request.(SearchRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "Search")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(SearchResponseObject); ok {
+		if err := validResponse.VisitSearchResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // GetStale operation middleware
 func (sh *strictHandler) GetStale(w http.ResponseWriter, r *http.Request, params GetStaleParams) {
 	var request GetStaleRequestObject
@@ -1485,67 +2041,92 @@ func (sh *strictHandler) GetSummary(w http.ResponseWriter, r *http.Request, para
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
-	"PiNw/+7+3wMA",
+	"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",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,
