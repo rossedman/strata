@@ -15,6 +15,7 @@ import (
 	duckdb "github.com/duckdb/duckdb-go/v2"
 
 	"github.com/rossedman/strata/internal/model"
+	"github.com/rossedman/strata/internal/store"
 )
 
 // Facts are what the index knows about one image, as input to Evaluate.
@@ -352,12 +353,14 @@ func (e *Evaluator) labelPolicy(f Facts, r *Result) {
 	}
 }
 
-// Recompute evaluates every image in the index and replaces the staleness
-// table.
-func Recompute(ctx context.Context, db *sql.DB, policy Policy, now time.Time) error {
+// Recompute evaluates every image in the index and updates the staleness
+// table. Verdicts depend on the time as well as the index, so every image
+// is evaluated, but only rows whose verdict, reasons or day counts changed
+// are written. It returns the digests it wrote or removed.
+func Recompute(ctx context.Context, db *sql.DB, policy Policy, now time.Time) ([]string, error) {
 	ev, facts, err := load(ctx, db, policy, now)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	results := make([]Result, len(facts))
 	for i, f := range facts {
@@ -441,24 +444,68 @@ func queryEvents(ctx context.Context, db *sql.DB) ([]model.TagEvent, error) {
 }
 
 // write replaces the staleness table with results.
-func write(ctx context.Context, db *sql.DB, results []Result, now time.Time) error {
+func write(ctx context.Context, db *sql.DB, results []Result, now time.Time) ([]string, error) {
 	conn, err := db.Conn(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer func() { _ = conn.Close() }()
-	if _, err := conn.ExecContext(ctx, "BEGIN TRANSACTION; DELETE FROM staleness"); err != nil {
-		return fmt.Errorf("clear staleness: %w", err)
+	if err := store.CreateTempLike(ctx, conn, "new_staleness", "staleness"); err != nil {
+		return nil, fmt.Errorf("stage staleness: %w", err)
 	}
-	err = conn.Raw(func(dc any) error { return appendResults(dc.(driver.Conn), results, now) })
+	if err := conn.Raw(func(dc any) error { return appendResults(dc.(driver.Conn), results, now) }); err != nil {
+		return nil, err
+	}
+	if _, err := conn.ExecContext(ctx, "BEGIN TRANSACTION"); err != nil {
+		return nil, fmt.Errorf("begin: %w", err)
+	}
+	changed, err := applyChanges(ctx, conn)
 	if err != nil {
-		_, _ = conn.ExecContext(ctx, "ROLLBACK")
-		return err
+		_, _ = conn.ExecContext(context.WithoutCancel(ctx), "ROLLBACK")
+		return nil, err
 	}
-	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
-		return fmt.Errorf("commit staleness: %w", err)
+	if _, err := conn.ExecContext(context.WithoutCancel(ctx), "COMMIT"); err != nil {
+		return nil, fmt.Errorf("commit staleness: %w", err)
 	}
-	return nil
+	return changed, nil
+}
+
+// compared lists the staleness columns a change is judged on: everything
+// but when the row was computed, with reasons as text, and age_days. Every
+// image's age moves daily and nothing reads it from this table (queries
+// compute age from the image's creation time), so comparing it would
+// rewrite every row once a day for nothing.
+const compared = `digest, verdict, reasons::JSON::VARCHAR, base_drift_generations, base_drift_days, base_tag,
+	superseded_days, untagged, last_pulled_days, eol_base, label_policy, inferred`
+
+// applyChanges replaces the staleness rows that differ from the staged
+// ones and returns their digests.
+func applyChanges(ctx context.Context, conn *sql.Conn) ([]string, error) {
+	for _, q := range []string{
+		`CREATE OR REPLACE TEMP TABLE staleness_changed AS
+			SELECT digest FROM (SELECT ` + compared + ` FROM staleness EXCEPT SELECT ` + compared + ` FROM new_staleness)
+			UNION SELECT digest FROM (SELECT ` + compared + ` FROM new_staleness EXCEPT SELECT ` + compared + ` FROM staleness)`,
+		`DELETE FROM staleness WHERE digest IN (SELECT digest FROM staleness_changed)`,
+		`INSERT INTO staleness SELECT * FROM new_staleness WHERE digest IN (SELECT digest FROM staleness_changed)`,
+	} {
+		if _, err := conn.ExecContext(ctx, q); err != nil {
+			return nil, fmt.Errorf("update staleness: %w", err)
+		}
+	}
+	rows, err := conn.QueryContext(ctx, `SELECT digest FROM staleness_changed ORDER BY digest`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []string
+	for rows.Next() {
+		var d string
+		if err := rows.Scan(&d); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
 }
 
 // appendResults bulk-loads results, staging reasons as JSON text.
@@ -476,7 +523,7 @@ func appendResults(conn driver.Conn, results []Result, now time.Time) error {
 		}
 		infos[i] = ti
 	}
-	a, err := duckdb.NewQueryAppender(conn, `INSERT INTO staleness SELECT col1, col2, col3::JSON::VARIANT,
+	a, err := duckdb.NewQueryAppender(conn, `INSERT INTO new_staleness SELECT col1, col2, col3::JSON::VARIANT,
 		col4, col5, col6, col7, col8, col9, col10, col11, col12, col13, col14 FROM appended_data`, "", infos, nil)
 	if err != nil {
 		return fmt.Errorf("appender for staleness: %w", err)

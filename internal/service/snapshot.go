@@ -34,6 +34,13 @@ var SnapshotGroups = []string{"repo", "root"}
 // replacing any earlier snapshot from the same day. Snapshots start on the
 // first run, like tag history, so they cannot be backfilled.
 func (s *Service) Snapshot(ctx context.Context) error {
+	_, err := s.snapshot(ctx)
+	return err
+}
+
+// snapshot writes today's metrics, changing only the rows whose value
+// moved since the last snapshot today, and returns how many it changed.
+func (s *Service) snapshot(ctx context.Context) (int, error) {
 	now := s.Now().UTC()
 	day := now.Format(time.DateOnly)
 	date := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
@@ -45,7 +52,7 @@ func (s *Service) Snapshot(ctx context.Context) error {
 	for _, g := range groups {
 		ms, err := s.groupMetrics(ctx, g)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		name := g
 		if name == "" {
@@ -60,15 +67,16 @@ func (s *Service) Snapshot(ctx context.Context) error {
 	}
 	keys, err := s.Labels(ctx)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	for _, k := range keys {
 		rows = append(rows, []any{date, "label_coverage", k.Key, "coverage_pct", k.CoveragePct})
 	}
-	if err := s.Store.ReplaceRows(ctx, `DELETE FROM snapshots WHERE day = ?`, []any{day}, "snapshots", rows); err != nil {
-		return fmt.Errorf("write snapshot: %w", err)
+	n, err := s.Store.MergeRows(ctx, "snapshots", "day = ?", []any{day}, []string{"day", "group_by", "group_value", "metric"}, rows)
+	if err != nil {
+		return 0, fmt.Errorf("write snapshot: %w", err)
 	}
-	return nil
+	return n, nil
 }
 
 // Change is one line of a diff report.

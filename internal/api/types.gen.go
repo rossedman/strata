@@ -522,6 +522,9 @@ type IndexStatus struct {
 	Error      *string    `json:"error,omitempty"`
 	FinishedAt *time.Time `json:"finished_at,omitempty"`
 
+	// LastRefresh What the last refresh rewrote; refreshes are incremental
+	LastRefresh *RefreshStats `json:"last_refresh,omitempty"`
+
 	// RefreshEverySeconds How often views refresh during a crawl; 0 means only at the end
 	RefreshEverySeconds int64 `json:"refresh_every_seconds"`
 
@@ -657,6 +660,33 @@ type Referrer struct {
 
 // ReferrerKind defines model for Referrer.Kind.
 type ReferrerKind string
+
+// RefreshStats What the last refresh rewrote; refreshes are incremental
+type RefreshStats struct {
+	// Duration Nanoseconds the refresh took
+	Duration int64 `json:"duration"`
+
+	// FactsRebuilt Image rows rebuilt in the query table; -1 when rebuilt in full
+	FactsRebuilt int `json:"facts_rebuilt"`
+
+	// Full Every derived table was rebuilt
+	Full bool `json:"full"`
+
+	// LineageChanged Lineage rows rewritten
+	LineageChanged int `json:"lineage_changed"`
+
+	// LineageSkipped No input to lineage changed
+	LineageSkipped bool `json:"lineage_skipped"`
+
+	// SnapshotRows Snapshot rows added, changed or removed
+	SnapshotRows int `json:"snapshot_rows"`
+
+	// SnapshotSkipped No image row changed since today's snapshot
+	SnapshotSkipped bool `json:"snapshot_skipped"`
+
+	// VerdictsChanged Staleness rows rewritten
+	VerdictsChanged int `json:"verdicts_changed"`
+}
 
 // Resolved A ref and the platform manifest digest it names
 type Resolved struct {

@@ -43,11 +43,11 @@ func build(t *testing.T) (*registry, *sql.DB) {
 		Tags:   []model.Tag{fixture.Tag(r.goBase, "1.22", 0), fixture.Tag(r.debian, "bookworm-slim", 0)},
 	}
 	s := fixture.Open(t, b)
-	if err := Recompute(context.Background(), s.DB(), Options{Labels: []string{"base"}}); err != nil {
+	if _, err := Recompute(context.Background(), s.DB(), Options{Labels: []string{"base"}}); err != nil {
 		t.Fatal(err)
 	}
 	// Recomputing is idempotent.
-	if err := Recompute(context.Background(), s.DB(), Options{Labels: []string{"base"}}); err != nil {
+	if _, err := Recompute(context.Background(), s.DB(), Options{Labels: []string{"base"}}); err != nil {
 		t.Fatal(err)
 	}
 	return r, s.DB()
@@ -145,7 +145,7 @@ func TestRecomputeCanceled(t *testing.T) {
 	s := fixture.Open(t, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := Recompute(ctx, s.DB(), Options{}); err == nil {
+	if _, err := Recompute(ctx, s.DB(), Options{}); err == nil {
 		t.Fatal("Recompute ran on a canceled context")
 	}
 }

@@ -182,10 +182,10 @@ func registryDB(t *testing.T) (*store.Store, map[string]*model.Image) {
 	}
 	s := fixture.Open(t, b)
 	ctx := context.Background()
-	if err := lineage.Recompute(ctx, s.DB(), lineage.Options{}); err != nil {
+	if _, err := lineage.Recompute(ctx, s.DB(), lineage.Options{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := stale.Recompute(ctx, s.DB(), stale.DefaultPolicy(), fixture.Epoch); err != nil {
+	if _, err := stale.Recompute(ctx, s.DB(), stale.DefaultPolicy(), fixture.Epoch); err != nil {
 		t.Fatal(err)
 	}
 	return s, imgs

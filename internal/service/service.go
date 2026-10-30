@@ -64,18 +64,20 @@ func (s *Service) logger() *slog.Logger {
 func New(st *store.Store) *Service {
 	s := &Service{Store: st, Policy: stale.DefaultPolicy(), Platform: "linux/amd64", Now: time.Now}
 	var n int
-	if err := st.DB().QueryRow(`SELECT count(*) FROM information_schema.tables WHERE table_name = 'image_facts'`).Scan(&n); err == nil {
-		s.facts.Store(n > 0)
+	if err := st.DB().QueryRow(`SELECT count(*) FROM information_schema.tables WHERE table_name = 'image_facts'`).Scan(&n); err == nil && n > 0 {
+		// Files written before ages were computed live lack the view.
+		_, err := st.DB().Exec(factsLiveView)
+		s.facts.Store(err == nil)
 	}
 	return s
 }
 
-// view returns the table queries read image rows from: image_facts, the
-// materialized copy refresh writes, when it exists, else the image_view it
-// is built from.
+// view returns the table queries read image rows from: image_facts_live,
+// the materialized copy refresh writes with ages computed at query time,
+// when it exists, else the image_view it is built from.
 func (s *Service) view() string {
 	if s.facts.Load() {
-		return "image_facts"
+		return "image_facts_live"
 	}
 	return "image_view"
 }
@@ -137,8 +139,9 @@ func (s *Service) Index(ctx context.Context, opts crawl.Options) (res IndexResul
 	return res, nil
 }
 
-// Refresh recomputes the derived views: lineage, staleness and the daily
-// snapshot.
+// Refresh brings the derived views up to date with the index: lineage,
+// staleness, subtree stats, the materialized image facts and today's
+// snapshot. It is incremental: see refresh.
 func (s *Service) Refresh(ctx context.Context) error {
 	s.refreshMu.Lock()
 	defer s.refreshMu.Unlock()
@@ -148,23 +151,6 @@ func (s *Service) Refresh(ctx context.Context) error {
 	now := s.Now()
 	s.update(func(st *IndexStatus) { st.RefreshedAt = &now })
 	return nil
-}
-
-// refresh does the work of Refresh; the caller holds refreshMu.
-func (s *Service) refresh(ctx context.Context) error {
-	if err := lineage.Recompute(ctx, s.db(), s.Lineage); err != nil {
-		return err
-	}
-	if err := stale.Recompute(ctx, s.db(), s.Policy, s.Now()); err != nil {
-		return err
-	}
-	if err := s.subtreeStats(ctx); err != nil {
-		return err
-	}
-	if err := s.materializeFacts(ctx); err != nil {
-		return err
-	}
-	return s.Snapshot(ctx)
 }
 
 // Resolve maps a ref to one platform manifest digest. It accepts a
@@ -296,20 +282,4 @@ func toStrings(v any) []string {
 	}
 	sort.Strings(out)
 	return out
-}
-
-// materializeFacts writes image_view into the image_facts table, so the
-// UI, queries and reports scan one columnar table instead of re-joining
-// refs, tags, lineage, staleness and referrers for every image.
-func (s *Service) materializeFacts(ctx context.Context) error {
-	for _, q := range []string{
-		`CREATE OR REPLACE TABLE image_facts AS SELECT * FROM image_view`,
-		`CREATE INDEX IF NOT EXISTS image_facts_digest ON image_facts (digest)`,
-	} {
-		if _, err := s.db().ExecContext(ctx, q); err != nil {
-			return fmt.Errorf("materialize image facts: %w", err)
-		}
-	}
-	s.facts.Store(true)
-	return nil
 }

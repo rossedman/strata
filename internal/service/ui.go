@@ -24,22 +24,27 @@ func (s *Service) subtreeStats(ctx context.Context) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 	stmts := []string{
-		`DELETE FROM subtree_stats`,
-		`INSERT INTO subtree_stats
+		`CREATE OR REPLACE TEMP TABLE new_subtree_stats AS
 			WITH RECURSIVE up(id, anc, d) AS (
 				SELECT digest, digest, 0 FROM lineage
 				UNION ALL
 				SELECT up.id, l.parent, up.d + 1 FROM up JOIN lineage l ON l.digest = up.anc
 				WHERE l.parent IS NOT NULL AND up.d < 64
 			)
-			SELECT up.anc, count(i.digest),
-				count(*) FILTER (WHERE s.verdict = 'fresh'),
-				count(*) FILTER (WHERE s.verdict = 'drifting'),
-				count(*) FILTER (WHERE s.verdict = 'stale'),
-				count(*) FILTER (WHERE s.verdict = 'abandoned'),
-				max(i.created) FILTER (WHERE year(i.created) >= 1980)
+			SELECT up.anc AS id, count(i.digest) AS images,
+				count(*) FILTER (WHERE s.verdict = 'fresh') AS fresh,
+				count(*) FILTER (WHERE s.verdict = 'drifting') AS drifting,
+				count(*) FILTER (WHERE s.verdict = 'stale') AS stale,
+				count(*) FILTER (WHERE s.verdict = 'abandoned') AS abandoned,
+				max(i.created) FILTER (WHERE year(i.created) >= 1980) AS newest
 			FROM up LEFT JOIN images i ON i.digest = up.id LEFT JOIN staleness s ON s.digest = up.id
 			GROUP BY up.anc`,
+		// Only nodes whose counts moved are rewritten.
+		`CREATE OR REPLACE TEMP TABLE subtree_changed AS
+			SELECT id FROM (SELECT * FROM subtree_stats EXCEPT SELECT * FROM new_subtree_stats)
+			UNION SELECT id FROM (SELECT * FROM new_subtree_stats EXCEPT SELECT * FROM subtree_stats)`,
+		`DELETE FROM subtree_stats WHERE id IN (SELECT id FROM subtree_changed)`,
+		`INSERT INTO subtree_stats SELECT * FROM new_subtree_stats WHERE id IN (SELECT id FROM subtree_changed)`,
 	}
 	for _, q := range stmts {
 		if _, err := tx.ExecContext(ctx, q); err != nil {

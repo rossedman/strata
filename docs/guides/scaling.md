@@ -36,7 +36,14 @@ A crawl reads repos, tags, manifests and image configs. It never pulls layers.
 
 Images already in the index are skipped, so a re-crawl only lists and resolves tags. The crawl keeps one connection per repo, so the registry handshake and token exchange happen about once per repo rather than before every request.
 
-After the crawl, strata recomputes lineage, staleness and the materialized views, called a refresh. Refresh time grows linearly with the size of the index.
+After the crawl, strata brings lineage, staleness and the materialized views up to date, called a refresh. The first refresh builds everything. Later ones are incremental:
+
+- Lineage is skipped when no image, tag or index entry changed, and otherwise only rows that differ are written.
+- Staleness depends on the date, so every image is evaluated, but only verdicts that changed are written.
+- The table queries and the UI read is rebuilt only for images that changed, or whose parent's or root's tags moved.
+- Today's snapshot is skipped when no image changed.
+
+`GET /v1/status` reports what the last refresh rewrote, under `last_refresh`.
 
 These numbers come from the benchmarks in the repository, run on a 4-vCPU machine. Your registry's latency and limits will move them, so use them as a starting point:
 
@@ -45,14 +52,16 @@ These numbers come from the benchmarks in the repository, run on a 4-vCPU machin
 | First crawl, synthetic registry, 2 ms per request | about 400 images/s with 4 workers, 850 with 16 to 64 |
 | Requests per new image | 3.3 (2.4 through the ECR API) |
 | Re-crawl | 1.3 requests per tag; through the ECR API, about one call per 1,000 images |
-| Refresh | about 5,500 images/s: 9 s at 50,000 images, 26 s at 200,000 |
+| First (full) refresh | 28 s at 200,000 images |
+| Refresh after a re-crawl with no changes | 5 s at 200,000 images |
+| Refresh after 100 new images and 50 tag moves | 14 s at 200,000 images |
 | Index size | about 4.5 KB per image for 3-layer images; deeper images take more |
 | Peak memory | 2.9 GB refreshing 200,000 images |
 
 Extrapolated to 2 million images, these give:
 
 - about 6.5 million requests for a first crawl;
-- a refresh of 5 to 10 minutes;
+- a first refresh of 5 to 10 minutes, and routine refreshes of 1 to 3 minutes;
 - an index of 10 to 20 GB.
 
 With 50 ms of registry latency and 64 workers, the requests alone take about an hour and a half. Expect a first crawl of 1 to 3 hours, depending on how many requests per second your registry allows.
@@ -150,7 +159,7 @@ Set `provider: distribution` to crawl an ECR host through the plain registry pro
 
 - A banner at the top of the UI shows the registry, the repos done out of the total and the new images so far. It offers **Show latest** when the views have refreshed since the page loaded.
 - Every view answers from what is indexed so far. Crawled rows are written every few seconds.
-- Lineage, staleness and the views refresh every `--refresh-every` (default 10 minutes) while the crawl finds new images, and once more when it finishes. A refresh of a large index takes minutes, so each one waits at least as long as the last took before the next starts. At 2 million images, `--refresh-every 30m` keeps refreshes from slowing the crawl. `--refresh-every 0` refreshes only at the end.
+- Lineage, staleness and the views refresh every `--refresh-every` (default 10 minutes) while the crawl finds new images, and once more when it finishes. A refresh during a first crawl writes most of the index, so each one waits at least as long as the last took before the next starts. At 2 million images, `--refresh-every 30m` keeps refreshes from slowing the crawl. `--refresh-every 0` refreshes only at the end.
 - `GET /v1/status` returns the same progress as JSON, for monitoring.
 
 Until a base image's repo is crawled, images built on it are grouped under "Shared layers, image not in the registry" in the UI. They move under the base's name at the next refresh after its repo is indexed. To have bases named from the start, crawl them first:
