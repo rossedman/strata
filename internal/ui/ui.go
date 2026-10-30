@@ -19,6 +19,7 @@ import (
 	"charm.land/lipgloss/v2/compat"
 	"charm.land/log/v2"
 	"github.com/charmbracelet/colorprofile"
+	"golang.org/x/term"
 )
 
 // Brand palette. Violet is the one color that means strata; the verdict
@@ -66,14 +67,11 @@ func Profile(w io.Writer) colorprofile.Profile {
 	return colorprofile.Detect(w, os.Environ())
 }
 
-// IsTerminal reports whether f is an interactive terminal.
+// IsTerminal reports whether f is an interactive terminal. Character
+// devices that are not terminals, such as /dev/null, are not.
 func IsTerminal(f any) bool {
 	file, ok := f.(*os.File)
-	if !ok {
-		return false
-	}
-	fi, err := file.Stat()
-	return err == nil && fi.Mode()&os.ModeCharDevice != 0
+	return ok && term.IsTerminal(int(file.Fd())) //nolint:gosec // file descriptors fit in an int
 }
 
 // Bytes formats a byte count with binary units.

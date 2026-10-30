@@ -50,6 +50,14 @@ func TestTerminalAndLogger(t *testing.T) {
 	if IsTerminal(f) {
 		t.Fatal("file is not a terminal")
 	}
+	null, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = null.Close() }()
+	if IsTerminal(null) {
+		t.Fatal("/dev/null is a character device but not a terminal")
+	}
 	var b bytes.Buffer
 	l, err := NewLogger(&b, "debug")
 	if err != nil {

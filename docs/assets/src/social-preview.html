@@ -1,0 +1,29 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><link rel="stylesheet" href="brand.css">
+<style>
+  body {
+    background:
+      radial-gradient(760px 420px at 50% 34%, rgba(169,155,255,0.19), transparent 70%),
+      radial-gradient(600px 360px at 90% 110%, rgba(95,211,154,0.09), transparent 70%),
+      var(--ink);
+  }
+  .grid { mask-image: radial-gradient(ellipse 70% 70% at 50% 40%, #000 20%, transparent 75%); }
+  .wrap { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 64px; }
+  .logo { width: 150px; height: 150px; filter: drop-shadow(0 18px 30px rgba(0,0,0,0.5)); }
+  .kicker { margin-top: 26px; font-size: 22px; color: var(--dim); }
+  h1 { margin-top: 10px; font-size: 72px; font-weight: 800; letter-spacing: -3px; line-height: 1.04; }
+  h1 span { color: var(--brand); }
+  p { margin-top: 22px; font-size: 26px; color: var(--mist); }
+  p b { color: var(--cream); font-weight: 600; }
+  .bar { position: absolute; left: 0; right: 0; bottom: 0; height: 10px; background: linear-gradient(90deg, var(--brand-2), var(--brand), var(--brand-3)); }
+</style></head>
+<body>
+  <div class="grid"></div>
+  <div class="wrap">
+    <img class="logo" src="../site/logo.svg" alt="">
+    <div class="kicker mono">rossedman/strata</div>
+    <h1>Every image's lineage<br><span>and staleness.</span></h1>
+    <p>From registry metadata alone, <b>with the reasons spelled out.</b></p>
+  </div>
+  <div class="bar"></div>
+</body></html>

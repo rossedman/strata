@@ -1,0 +1,44 @@
+name: Bug report
+description: Something in strata does not work as documented
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: strata version
+      description: Output of `strata version`
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS and architecture, and the registry type (Harbor, ECR, Artifactory, distribution...)
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The commands you ran. Redact registry hosts or names you cannot share.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Run with `--log-level debug` and paste the relevant lines.
+      render: text

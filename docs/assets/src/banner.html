@@ -1,0 +1,43 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><link rel="stylesheet" href="brand.css">
+<style>
+  body {
+    background:
+      radial-gradient(900px 440px at 14% 30%, rgba(169,155,255,0.17), transparent 70%),
+      radial-gradient(700px 420px at 95% 115%, rgba(95,211,154,0.08), transparent 70%),
+      var(--ink);
+  }
+  .grid { mask-image: linear-gradient(90deg, rgba(0,0,0,0.9), rgba(0,0,0,0.15)); }
+  .wrap { position: absolute; inset: 0; display: flex; align-items: center; padding: 0 48px 0 56px; gap: 36px; }
+  .logo { width: 132px; height: 132px; flex: none; filter: drop-shadow(0 18px 30px rgba(0,0,0,0.5)); }
+  .text { flex: 1; min-width: 0; }
+  .kicker { font-size: 18px; color: var(--dim); margin-bottom: 10px; }
+  h1 { font-size: 46px; font-weight: 800; letter-spacing: -1.8px; line-height: 1.06; white-space: nowrap; }
+  h1 span { color: var(--brand); }
+  p { margin-top: 16px; font-size: 20px; line-height: 1.4; color: var(--mist); }
+  p b { color: var(--cream); font-weight: 600; }
+  .term { width: 520px; flex: none; }
+  .term .body { font-size: 12.5px; line-height: 1.7; }
+</style></head>
+<body>
+  <div class="grid"></div>
+  <div class="wrap">
+    <img class="logo" src="../site/logo.svg" alt="">
+    <div class="text">
+      <div class="kicker mono">rossedman/strata</div>
+      <h1>Every image's lineage<br><span>and staleness.</span></h1>
+      <p>From registry metadata alone,<br><b>with the reasons spelled out.</b></p>
+    </div>
+    <div class="term mono">
+      <div class="bar"><i></i><i></i><i></i><span>strata</span></div>
+      <div class="body"><span class="p">$</span> <span class="c">strata stale --group-by label.team</span>
+<span class="d">label.team  images  fresh  drifting  stale  abandoned</span>
+web         3       <span class="ok">2</span>      0         <span class="e">1</span>      0
+payments    5       <span class="ok">2</span>      <span class="w">2</span>         0      1
+platform    7       <span class="ok">4</span>      <span class="w">3</span>         0      0
+legacy      2       <span class="ok">2</span>      0         0      0
+<span class="p">$</span> <span class="c">strata roots --count-descendants</span>
+<span class="d">4 distinct bases with 24 descendants</span></div>
+    </div>
+  </div>
+</body></html>
