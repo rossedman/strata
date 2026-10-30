@@ -68,9 +68,10 @@ generate-check: generate
 vuln:
 	$(GO) run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 
-## docs: regenerate the command reference
+## docs: regenerate the command reference and copy the API spec into the site
 docs:
 	$(GO) run ./tools/gendocs
+	cp api/openapi.yaml docs/reference/openapi.yaml
 
 ## docs-build: build the docs site strictly
 docs-build: docs

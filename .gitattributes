@@ -1,0 +1,6 @@
+* text=auto eol=lf
+*.gen.go linguist-generated=true
+internal/render/assets/vendor/** linguist-vendored=true
+docs/assets/src/fonts/** binary
+*.png binary
+*.woff2 binary

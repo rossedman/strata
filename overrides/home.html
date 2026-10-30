@@ -1,0 +1,218 @@
+{#- strata landing page. Every terminal line and panel is copied from a real
+    run against examples/demo-registry; every number is counted from the
+    code. Styles: docs/assets/site/landing.css -#}
+{% extends "main.html" %}
+
+{% set gh = "https://github.com/rossedman/strata" %}
+{% set install = "go install github.com/rossedman/strata@latest" %}
+
+{% block tabs %}
+{{ super() }}
+<div class="lp">
+
+  <section class="lp-hero">
+    <div class="lp-grid" aria-hidden="true"></div>
+    <div class="lp-wrap lp-hero__inner">
+      <div>
+        <img class="lp-hero__logo" src="{{ 'assets/site/logo.svg' | url }}" alt="">
+        <p class="lp-kicker">rossedman/strata</p>
+        <h1 class="lp-title">Every image's lineage<br><span>and staleness.</span></h1>
+        <p class="lp-tagline">strata indexes a container registry into one local file and tells platform teams what each image is built on and whether it has gone stale. <b>From registry metadata alone, with the reasons spelled out.</b></p>
+        <div class="lp-install">
+          <span class="lp-install__prompt">$</span>
+          <code>{{ install }}</code>
+          <button class="lp-copy" data-copy="{{ install }}" aria-label="Copy install command">
+            {% include ".icons/material/content-copy.svg" %}
+          </button>
+        </div>
+        <div class="lp-cta">
+          <a class="lp-btn lp-btn--primary" href="{{ 'getting-started/' | url }}">Get started {% include ".icons/material/arrow-right.svg" %}</a>
+          <a class="lp-btn" href="{{ 'guides/lineage/' | url }}">{% include ".icons/material/family-tree.svg" %} How lineage works</a>
+        </div>
+      </div>
+
+      <div class="lp-term" aria-label="A terminal running strata">
+        <div class="lp-term__bar"><i></i><i></i><i></i><span>~ zsh</span></div>
+        <div class="lp-term__body" data-typing>
+          <div><span class="p">$</span> <span class="c" data-type>strata stale --group-by label.team</span></div>
+          <div><span class="d">label.team  images  fresh  drifting  stale  abandoned</span></div>
+          <div>web         3       <span class="ok">2</span>      0         <span class="e">1</span>      0</div>
+          <div>payments    5       <span class="ok">2</span>      <span class="w">2</span>         0      1</div>
+          <div>platform    7       <span class="ok">4</span>      <span class="w">3</span>         0      0</div>
+          <div><span class="p">$</span> <span class="c" data-type>strata query 'stale in ["stale", "abandoned"]' --fields repo,tag,stale</span></div>
+          <div><span class="d">repo                         tag    stale</span></div>
+          <div>localhost:5000/payments/api         <span class="d">abandoned</span></div>
+          <div>localhost:5000/web/docs      1.0.0  <span class="e">stale</span></div>
+          <div><span class="p">$</span> <span class="c" data-type>strata roots --count-descendants</span></div>
+          <div><span class="d">4 distinct bases with 24 descendants</span><span class="lp-caret"></span></div>
+        </div>
+      </div>
+    </div>
+
+    <ul class="lp-wrap lp-stats">
+      <li><b>0</b><span>layer blobs downloaded: manifests and configs only</span></li>
+      <li><b>45</b><span>fields in the query language, compiled to SQL</span></li>
+      <li><b>21</b><span>commands, from index to serve</span></li>
+      <li><b>9</b><span>output formats, from NDJSON to an HTML explorer</span></li>
+    </ul>
+  </section>
+
+  <section class="lp-section" id="problem">
+    <div class="lp-wrap lp-split">
+      <div>
+        <p class="lp-eyebrow">The problem</p>
+        <h2>A million images.<br><span>No idea what they're built on.</span></h2>
+        <p class="lp-lede">Registries only know where a tag points now. Which images still run on last month's base, which bases quietly forked, and which builds nobody pulls any more are invisible, until a CVE lands in a base and someone has to find everything built on it. strata reads the layer stacks the registry already stores and turns them into a graph you can query.</p>
+        <ul class="lp-points">
+          <li>{% include ".icons/material/check-decagram-outline.svg" %} Parents come from exact layer-prefix matches, not from naming conventions</li>
+          <li>{% include ".icons/material/check-decagram-outline.svg" %} Every tag move is recorded from the first crawl, so base drift is measured, not guessed</li>
+          <li>{% include ".icons/material/check-decagram-outline.svg" %} Every verdict lists its reasons; there is no opaque score</li>
+        </ul>
+      </div>
+      <div class="lp-stack">
+        <article class="lp-panel" aria-label="strata explain output for payments/api:1.8.2">
+          <div class="lp-panel__head">
+            <span class="lp-panel__id">payments/api:1.8.2</span><span class="lp-pill lp-pill--warn">drifting</span>
+            <span class="lp-panel__meta">5 layers</span>
+          </div>
+          <h3>Why this image is drifting</h3>
+          <div class="lp-panel__sub">strata explain payments/api:1.8.2</div>
+          <div class="lp-quote lp-quote--warn">base localhost:5000/base/go-service:2.1 moved 1 time since this image's parent<small>Staleness</small></div>
+          <div class="lp-quote">superseded under localhost:5000/payments/api:latest 0 days ago<small>Staleness</small></div>
+          <div class="lp-well">parent evidence:
+  layers      localhost:5000/base/go-service@sha256:11a88e115ce8 (exact)</div>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section class="lp-section lp-section--alt">
+    <div class="lp-wrap">
+      <p class="lp-eyebrow">Core ideas</p>
+      <h2>Three questions,<br><span>one index.</span></h2>
+      <p class="lp-lede lp-lede--center">One crawl fetches every manifest and config once, by digest. Lineage, staleness and every query are views over that index, recomputed when something changes.</p>
+      <div class="lp-pillars">
+        <article class="lp-pillar" style="--accent: var(--info)">
+          <h3>Where did it come from?</h3><div class="when">Lineage from layers</div>
+          <p>An image's parent is the indexed image whose whole layer stack is the longest exact prefix of its own, matched by chain ID. Annotations and labels add declared parents, and disagreements are flagged.</p>
+          <pre><code>strata ancestry payments/api:1.8.2
+strata descendants base/go:1.22 \
+  --all-versions --depth 0</code></pre>
+        </article>
+        <article class="lp-pillar" style="--accent: var(--warn)">
+          <h3>Is it stale?</h3><div class="when">Explainable verdicts</div>
+          <p>Base drift, supersession, untagged leaves, EOL roots and label policy combine into fresh, drifting, stale or abandoned through a policy file you tune per repo or label.</p>
+          <pre><code>strata stale --group-by label.team
+strata query 'stale.base_drift'</code></pre>
+        </article>
+        <article class="lp-pillar" style="--accent: var(--brand)">
+          <h3>What is it?</h3><div class="when">Labels are query fields</div>
+          <p>Every config label and annotation is a field, next to config, referrers, ancestry and staleness. Filters compile to SQL and run inside DuckDB.</p>
+          <pre><code>strata query 'label.team = "payments"
+  and age > 180d and not has:sbom'</code></pre>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section class="lp-section">
+    <div class="lp-wrap">
+      <p class="lp-eyebrow">Why strata</p>
+      <h2>Read-only by design.<br><span>Fast where it counts.</span></h2>
+      <div class="lp-features">
+        {% for icon, title, body in [
+          ("database-outline", "One local file", "The index is a DuckDB 2.0 file. No database server, no source repos, no CI access: registry read access is all it needs."),
+          ("restore", "Resumable crawls", "Repos are checkpointed as they finish, so a crash resumes instead of restarting. Re-crawls list tags and compare digests."),
+          ("history", "Tag history from day one", "The one thing a registry can't give back. strata records every move and exports it to Parquet to survive rebuilds."),
+          ("shield-lock-outline", "Secrets stay out", "Environment values are never stored, only their keys. History commands pass through redaction before they are indexed."),
+          ("api", "API, MCP and CLI agree", "strata serve exposes an OpenAPI-generated JSON API and an MCP endpoint over the same service the CLI calls."),
+          ("graph-outline", "Graphs that scale", "Render lineage as a tree, Mermaid, DOT, SVG or an offline HTML explorer, with a node budget that collapses sprawl."),
+        ] %}
+        <article class="lp-card">
+          <div class="lp-icon">{% include ".icons/material/" ~ icon ~ ".svg" %}</div>
+          <h3>{{ title }}</h3>
+          <p>{{ body }}</p>
+        </article>
+        {% endfor %}
+      </div>
+    </div>
+  </section>
+
+  <section class="lp-section lp-section--alt" id="quick-start">
+    <div class="lp-wrap lp-split">
+      <div>
+        <p class="lp-eyebrow">Quick start</p>
+        <h2>Index a registry<br><span>in three commands.</span></h2>
+        <p class="lp-lede">You need Go and a C compiler, since DuckDB links through cgo, plus pull access to a registry. No registry handy? The getting-started guide runs a demo registry seeded with realistic images.</p>
+        <a class="lp-btn" href="{{ 'getting-started/' | url }}">{% include ".icons/material/book-open-page-variant-outline.svg" %} Full getting-started guide</a>
+      </div>
+      <ol class="lp-steps">
+        <li>
+          <h4>Install</h4>
+          <pre class="lp-code"><button class="lp-copy" aria-label="Copy">{% include ".icons/material/content-copy.svg" %}</button><code><span class="p">$</span> {{ install }}</code></pre>
+        </li>
+        <li>
+          <h4>Index</h4>
+          <p>Credentials come from your Docker config.</p>
+          <pre class="lp-code"><button class="lp-copy" aria-label="Copy">{% include ".icons/material/content-copy.svg" %}</button><code><span class="p">$</span> strata index --registry reg.example.com</code></pre>
+        </li>
+        <li>
+          <h4>Ask</h4>
+          <p>See where the stale images are, then why.</p>
+          <pre class="lp-code"><button class="lp-copy" aria-label="Copy">{% include ".icons/material/content-copy.svg" %}</button><code><span class="p">$</span> strata stale --group-by root</code></pre>
+        </li>
+      </ol>
+    </div>
+  </section>
+
+  <section class="lp-section">
+    <div class="lp-wrap">
+      <p class="lp-eyebrow">How it works</p>
+      <h2>Metadata in.<br><span>A lineage graph out.</span></h2>
+      <figure class="lp-figure">
+        <a href="{{ 'assets/how-it-works.png' | url }}"><img width="2560" height="1280" src="{{ 'assets/how-it-works.png' | url }}" alt="How strata works: the crawler lists repos and tags in an OCI registry and fetches each manifest and config once by digest. They are written to a DuckDB index of images, layer prefixes, labels, tags and tag history. Lineage edges come from matching layer chain IDs, staleness verdicts from tag history and policy. The CLI, the HTTP API and the MCP server all query the same index." loading="lazy"></a>
+        <figcaption>Tap to open the full-size diagram</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section class="lp-section lp-section--alt">
+    <div class="lp-wrap">
+      <p class="lp-eyebrow">Documentation</p>
+      <h2>Go deeper.</h2>
+      <div class="lp-docs">
+        {% for path, name, blurb in [
+          ("getting-started/", "Getting started", "Install, verify and index a demo registry"),
+          ("configuration/", "Configuration", "strata.yaml, environment and flags"),
+          ("guides/lineage/", "Lineage", "Chain IDs, phantom ancestors, declared parents"),
+          ("guides/staleness/", "Staleness", "Signals, verdicts and the policy file"),
+          ("guides/query-language/", "Query language", "Every field, operator and example"),
+          ("guides/footprint/", "Footprint", "Summary, labels, layers and change over time"),
+          ("guides/serving/", "Serving, API and MCP", "strata serve, auth and agents"),
+          ("reference/commands/strata/", "Command reference", "Generated from the CLI"),
+        ] %}
+        <a class="lp-doc" href="{{ path | url }}">
+          <b>{{ name }}</b><span>{{ blurb }}</span>
+          {% include ".icons/material/arrow-right.svg" %}
+        </a>
+        {% endfor %}
+      </div>
+    </div>
+  </section>
+
+  <section class="lp-final">
+    <div class="lp-grid" aria-hidden="true"></div>
+    <div class="lp-wrap">
+      <img class="lp-final__logo" src="{{ 'assets/site/logo.svg' | url }}" alt="">
+      <h2>Find out what your images are built on.</h2>
+      <p class="lp-lede lp-lede--center">Free and open source under the Apache-2.0 license.</p>
+      <div class="lp-cta lp-cta--center">
+        <a class="lp-btn lp-btn--primary" href="{{ 'getting-started/' | url }}">Get started {% include ".icons/material/arrow-right.svg" %}</a>
+        <a class="lp-btn" href="{{ gh }}">{% include ".icons/material/source-repository.svg" %} View on GitHub</a>
+      </div>
+    </div>
+  </section>
+</div>
+{% endblock %}
+
+{% block content %}{% endblock %}
