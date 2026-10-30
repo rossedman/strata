@@ -1,0 +1,55 @@
+/* Shared look for the README banner and social card, rendered to PNG by
+   ../render.sh. Fonts are vendored in fonts/ (SIL OFL) so renders are
+   reproducible offline. Colors match the site (../site/landing.css) and
+   the CLI (internal/ui/ui.go). */
+@font-face { font-family: Inter; src: url(fonts/Inter-Variable.woff2) format("woff2"); font-weight: 100 900; }
+@font-face { font-family: "JetBrains Mono"; src: url(fonts/JetBrainsMono-Variable.woff2) format("woff2"); font-weight: 100 800; }
+
+:root {
+  --ink: #0e0d16;
+  --ink-2: #17152a;
+  --ink-3: #2a2540;
+  --ink-4: #0a0912;
+  --brand: #a99bff;
+  --brand-2: #d6cfff;
+  --brand-3: #5b47d6;
+  --ok: #5fd39a;
+  --warn: #e8c84a;
+  --bad: #f08a5d;
+  --cream: #f4f1ff;
+  --mist: #c9c4dd;
+  --dim: #8e8aa6;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { width: 100%; height: 100%; }
+body {
+  font-family: Inter, sans-serif;
+  color: var(--cream);
+  background: var(--ink);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+  position: relative;
+}
+.mono { font-family: "JetBrains Mono", monospace; font-variant-ligatures: none; }
+
+/* Faint grid, used behind heroes. */
+.grid {
+  position: absolute; inset: 0;
+  background-image:
+    linear-gradient(rgba(169, 155, 255, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(169, 155, 255, 0.06) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+/* Terminal window. */
+.term { border-radius: 14px; background: var(--ink-4); border: 1px solid var(--ink-3); box-shadow: 0 24px 60px rgba(0,0,0,0.5); overflow: hidden; }
+.term .bar { height: 34px; display: flex; align-items: center; gap: 8px; padding: 0 14px; background: var(--ink-2); }
+.term .bar i { width: 11px; height: 11px; border-radius: 50%; background: var(--ink-3); display: block; }
+.term .bar span { margin-left: auto; margin-right: auto; padding-right: 48px; font-size: 13px; color: var(--dim); }
+.term .body { padding: 16px 20px 18px; line-height: 1.75; color: var(--mist); white-space: pre; }
+.p { color: var(--brand); }
+.c { color: var(--cream); }
+.ok { color: var(--ok); }
+.d { color: var(--dim); }
+.w { color: var(--warn); }
+.e { color: var(--bad); }

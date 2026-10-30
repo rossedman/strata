@@ -1,0 +1,58 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><link rel="stylesheet" href="brand.css">
+<style>
+  body { background: radial-gradient(900px 500px at 50% 0%, rgba(169,155,255,0.10), transparent 70%), var(--ink); }
+  .grid { mask-image: radial-gradient(ellipse 80% 70% at 50% 30%, #000 20%, transparent 80%); }
+  .wrap { position: absolute; inset: 0; padding: 44px 48px; display: grid; grid-template-columns: 1fr 34px 1.25fr 34px 1fr 34px 1fr; align-items: start; align-content: center; }
+  .arrow { align-self: center; }
+  .col { display: grid; gap: 14px; }
+  .label { font-size: 13px; letter-spacing: .1em; text-transform: uppercase; color: var(--dim); font-weight: 700; margin-bottom: 2px; }
+  .box { background: var(--ink-2); border: 1px solid var(--ink-3); border-radius: 12px; padding: 14px 16px; box-shadow: 0 10px 24px rgba(0,0,0,.35); }
+  .box h3 { font-size: 17px; font-weight: 700; color: var(--cream); letter-spacing: -.01em; }
+  .box p { margin-top: 6px; font-size: 13.5px; line-height: 1.45; color: var(--mist); }
+  .box code, .t { font-family: "JetBrains Mono", monospace; font-size: 12.5px; color: var(--brand-2); }
+  .accent { border-left: 4px solid var(--brand); }
+  .ok { border-left: 4px solid var(--ok); }
+  .warn { border-left: 4px solid var(--warn); }
+  .info { border-left: 4px solid #8fc6f0; }
+  .arrow { display: flex; align-items: center; justify-content: center; color: var(--brand); }
+  .arrow svg { width: 30px; height: 30px; }
+  .tables { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 10px; }
+  .tables span { font-family: "JetBrains Mono", monospace; font-size: 12px; color: var(--mist); background: var(--ink-4); border: 1px solid var(--ink-3); border-radius: 6px; padding: 3px 8px; }
+  .tables span.k { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, var(--ink-3)); }
+  .reg { text-align: left; }
+  .foot { position: absolute; left: 48px; right: 48px; bottom: 26px; display: flex; justify-content: space-between; font-size: 13px; color: var(--dim); }
+</style></head>
+<body>
+  <div class="grid"></div>
+  <div class="wrap">
+    <div class="col">
+      <div class="label">Registry</div>
+      <div class="box accent reg"><h3>OCI registry</h3><p>Any registry speaking the Distribution API. Read access only.</p></div>
+      <div class="box"><h3>Repos and tags</h3><p><code>_catalog</code>, then tag lists, then a HEAD per tag</p></div>
+      <div class="box"><h3>Manifests and configs</h3><p>Fetched once per digest. Layer blobs never.</p></div>
+    </div>
+    <div class="arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12h15M13 6l6 6-6 6"/></svg></div>
+    <div class="col">
+      <div class="label">Index · one DuckDB file</div>
+      <div class="box accent"><h3>strata index</h3><p>Resumable crawl with bounded concurrency and rate limits, checkpointed per repo.</p>
+        <div class="tables"><span>images</span><span>image_prefixes</span><span>labels</span><span>tags</span><span class="k">tag_history</span><span>referrers</span><span>layers</span><span>snapshots</span></div></div>
+      <div class="box"><p><span class="t">tag_history</span> is the one table the registry cannot rebuild. It starts on the first crawl and exports to Parquet.</p></div>
+    </div>
+    <div class="arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12h15M13 6l6 6-6 6"/></svg></div>
+    <div class="col">
+      <div class="label">Derived views</div>
+      <div class="box info"><h3>Lineage</h3><p>Longest exact prefix by chain ID, plus declared parents from annotations and labels.</p></div>
+      <div class="box warn"><h3>Staleness</h3><p>Base drift from tag history, supersession, EOL roots and policy, with reasons.</p></div>
+      <div class="box ok"><h3>Snapshots</h3><p>Daily footprint metrics for <code>diff</code> and <code>trend</code>.</p></div>
+    </div>
+    <div class="arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12h15M13 6l6 6-6 6"/></svg></div>
+    <div class="col">
+      <div class="label">Answers</div>
+      <div class="box"><h3>CLI</h3><p><code>explain</code>, <code>ancestry</code>, <code>descendants</code>, <code>query</code>, <code>stale</code></p></div>
+      <div class="box"><h3>HTTP API</h3><p>Generated from <code>api/openapi.yaml</code></p></div>
+      <div class="box"><h3>MCP</h3><p>The same questions as tools for agents</p></div>
+    </div>
+  </div>
+  <div class="foot"><span>Filters compile to SQL and run inside DuckDB</span><span>strata serve owns the file; CLI commands route through it</span></div>
+</body></html>
