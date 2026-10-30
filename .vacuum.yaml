@@ -1,0 +1,10 @@
+# vacuum ruleset for api/openapi.yaml: the recommended rules, minus two
+# that conflict with deliberate choices.
+extends: [[vacuum:oas, recommended]]
+rules:
+  # Properties are snake_case to match the CLI's JSON output and the
+  # query language's field names.
+  camel-case-properties: off
+  # Responses are documented by schema; examples would duplicate the
+  # generated reference without adding information.
+  oas3-missing-example: off

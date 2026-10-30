@@ -1,0 +1,40 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+coverage.generated
+
+# Go workspace file
+go.work
+go.work.sum
+
+# Environment files
+.env
+
+# Build and release output
+/bin/
+/dist/
+
+# Docs site build output (anchored, so docs/assets/site/ is kept)
+/site/
+
+# Benchmark results
+bench.txt
+
+# strata index files
+*.duckdb
+*.duckdb.wal
+
+# Editors and OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
