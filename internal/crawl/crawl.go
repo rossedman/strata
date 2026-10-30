@@ -132,8 +132,8 @@ type crawler struct {
 	sem     chan struct{}
 	// configs caches parsed configs by digest so each is fetched once.
 	configs sync.Map
-	// writeMu serializes writes to the index.
-	writeMu sync.Mutex
+	// w merges repo batches into large writes.
+	w *writer
 }
 
 // Crawl indexes a registry. A crawl that stops part way is resumed by the
@@ -229,6 +229,7 @@ func (c *crawler) crawlRegistry(ctx context.Context) error {
 			return err
 		}
 	}
+	c.w = newWriter(c.st, run, c.opts.BatchSize)
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(c.opts.Workers)
 	for _, r := range repos {
@@ -250,10 +251,13 @@ func (c *crawler) crawlRegistry(ctx context.Context) error {
 				return fmt.Errorf("%s: %w", full, err)
 			}
 			atomic.AddInt64(&c.stats.Repos, 1)
-			return c.st.CheckpointRepo(gctx, run, full)
+			return nil
 		})
 	}
 	if err := g.Wait(); err != nil {
+		return err
+	}
+	if err := c.w.flush(ctx); err != nil {
 		return err
 	}
 	return c.st.FinishCrawl(ctx, run)
@@ -329,15 +333,15 @@ func (c *crawler) crawlRepo(ctx context.Context, repo name.Repository) error {
 	}
 	var mu sync.Mutex
 	seenDigest := map[string]bool{}
-	flush := func(force bool) error {
-		if !force && len(batch.Images) < c.opts.BatchSize {
+	// flush hands a full batch to the writer early, so a large repo is
+	// not held in memory whole.
+	flush := func() error {
+		if len(batch.Images) < c.opts.BatchSize {
 			return nil
 		}
 		b := batch
 		batch = &store.Batch{}
-		c.writeMu.Lock()
-		defer c.writeMu.Unlock()
-		return c.st.Write(ctx, b)
+		return c.w.add(ctx, b, "")
 	}
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(2 * c.opts.Workers)
@@ -383,7 +387,7 @@ func (c *crawler) crawlRepo(ctx context.Context, repo name.Repository) error {
 			batch.Referrers = append(batch.Referrers, res.refs...)
 			atomic.AddInt64(&c.stats.Images, int64(len(res.images)))
 			atomic.AddInt64(&c.stats.Referrers, int64(len(res.refs)))
-			return flush(false)
+			return flush()
 		})
 	}
 	if err := g.Wait(); err != nil {
@@ -403,7 +407,7 @@ func (c *crawler) crawlRepo(ctx context.Context, repo name.Repository) error {
 		}
 	}
 	c.opts.Logger.Debug("repo crawled", "repo", full, "tags", len(tags))
-	return flush(true)
+	return c.w.add(ctx, batch, full)
 }
 
 // listImages lists a repo through the Lister. It returns the sorted tags
@@ -671,8 +675,6 @@ func (c *crawler) crawlExternal(ctx context.Context, s string) error {
 		}
 	}
 	atomic.AddInt64(&c.stats.Images, int64(len(res.images)))
-	c.writeMu.Lock()
-	defer c.writeMu.Unlock()
 	return c.st.Write(ctx, b)
 }
 

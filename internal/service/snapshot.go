@@ -34,19 +34,14 @@ var SnapshotGroups = []string{"repo", "root"}
 // replacing any earlier snapshot from the same day. Snapshots start on the
 // first run, like tag history, so they cannot be backfilled.
 func (s *Service) Snapshot(ctx context.Context) error {
-	day := s.Now().UTC().Format(time.DateOnly)
+	now := s.Now().UTC()
+	day := now.Format(time.DateOnly)
+	date := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 	groups := append([]string{""}, SnapshotGroups...)
 	for _, k := range s.Required {
 		groups = append(groups, "label."+k)
 	}
-	tx, err := s.db().BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, `DELETE FROM snapshots WHERE day = ?`, day); err != nil {
-		return fmt.Errorf("clear snapshot: %w", err)
-	}
+	var rows [][]any
 	for _, g := range groups {
 		ms, err := s.groupMetrics(ctx, g)
 		if err != nil {
@@ -59,9 +54,7 @@ func (s *Service) Snapshot(ctx context.Context) error {
 		for _, m := range ms {
 			vals := metricValues(m)
 			for _, k := range snapshotMetrics {
-				if _, err := tx.ExecContext(ctx, `INSERT INTO snapshots VALUES (?, ?, ?, ?, ?)`, day, name, m.Group, k, vals[k]); err != nil {
-					return fmt.Errorf("write snapshot: %w", err)
-				}
+				rows = append(rows, []any{date, name, m.Group, k, vals[k]})
 			}
 		}
 	}
@@ -70,11 +63,12 @@ func (s *Service) Snapshot(ctx context.Context) error {
 		return err
 	}
 	for _, k := range keys {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO snapshots VALUES (?, 'label_coverage', ?, 'coverage_pct', ?)`, day, k.Key, k.CoveragePct); err != nil {
-			return fmt.Errorf("write label coverage: %w", err)
-		}
+		rows = append(rows, []any{date, "label_coverage", k.Key, "coverage_pct", k.CoveragePct})
 	}
-	return tx.Commit()
+	if err := s.Store.ReplaceRows(ctx, `DELETE FROM snapshots WHERE day = ?`, []any{day}, "snapshots", rows); err != nil {
+		return fmt.Errorf("write snapshot: %w", err)
+	}
+	return nil
 }
 
 // Change is one line of a diff report.
