@@ -3,16 +3,23 @@ package crawl
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/rossedman/strata/internal/model"
+	"github.com/rossedman/strata/internal/store"
 )
 
 // maxProvenance bounds a provenance document; BuildKit's are a few KB, or
@@ -140,4 +147,104 @@ func dockerPURL(uri string) (string, bool) {
 		return repo + ":" + t.TagStr(), true
 	}
 	return repo, true
+}
+
+// backfillPage is how many unchecked indexes a backfill reads and writes
+// at a time, so a stopped crawl keeps what it finished.
+const backfillPage = 500
+
+// backfillProvenance reads the provenance of indexes indexed before
+// strata read provenance: the index manifest and its attestation, not the
+// images, which are already indexed. Each index is marked checked with
+// its bases in one write, so the work happens once and a stopped crawl
+// resumes. An index that cannot be read is left unchecked and tried by
+// the next crawl, unless the registry no longer has it.
+func (c *crawler) backfillProvenance(ctx context.Context) error {
+	failed := map[string]bool{}
+	for {
+		todo, err := c.st.UncheckedIndexes(ctx, c.registryHost(), backfillPage+len(failed))
+		if err != nil {
+			return err
+		}
+		var page []store.UncheckedIndex
+		for _, u := range todo {
+			if !failed[u.Digest] {
+				page = append(page, u)
+			}
+		}
+		if len(page) == 0 {
+			return nil
+		}
+		var mu sync.Mutex
+		batch := &store.Batch{}
+		g, gctx := errgroup.WithContext(ctx)
+		g.SetLimit(c.opts.Workers)
+		for _, u := range page {
+			g.Go(func() error {
+				bases, gone, err := c.indexProvenance(gctx, u)
+				mu.Lock()
+				defer mu.Unlock()
+				switch {
+				case gctx.Err() != nil:
+					return gctx.Err()
+				case err != nil && !gone:
+					failed[u.Digest] = true
+					c.opts.Logger.Debug("provenance backfill failed", "index", u.Digest, "repo", u.Repo, "err", err)
+					return nil
+				}
+				batch.BaseRefs = append(batch.BaseRefs, bases...)
+				batch.ProvenanceChecked = append(batch.ProvenanceChecked, u.Digest)
+				atomic.AddInt64(&c.stats.ProvenanceBackfilled, 1)
+				return nil
+			})
+		}
+		if err := g.Wait(); err != nil {
+			return err
+		}
+		if err := c.st.Write(ctx, batch); err != nil {
+			return err
+		}
+	}
+}
+
+// indexProvenance reads one index's attestations. gone reports that the
+// registry no longer has the index, so there is nothing to retry.
+func (c *crawler) indexProvenance(ctx context.Context, u store.UncheckedIndex) (bases []model.BaseRef, gone bool, err error) {
+	repo, err := name.NewRepository(u.Repo, c.nameOpt...)
+	if err != nil {
+		return nil, true, err
+	}
+	h, err := v1.NewHash(u.Digest)
+	if err != nil {
+		return nil, true, err
+	}
+	im, err := c.indexManifest(ctx, repo.Digest(h.String()))
+	if err != nil {
+		var terr *transport.Error
+		return nil, errors.As(err, &terr) && terr.StatusCode == http.StatusNotFound, err
+	}
+	for _, m := range im.Manifests {
+		if !isAttestationManifest(m) {
+			continue
+		}
+		b, err := c.provenance(ctx, repo, m)
+		if err != nil {
+			return nil, false, err
+		}
+		bases = append(bases, b...)
+	}
+	return bases, false, nil
+}
+
+// registryHost returns the crawled registry's host as repo names start
+// with it: docker.io for Docker Hub.
+func (c *crawler) registryHost() string {
+	r, err := name.NewRegistry(c.opts.Registry, c.nameOpt...)
+	if err != nil {
+		return c.opts.Registry
+	}
+	if h := r.RegistryStr(); h != name.DefaultRegistry {
+		return h
+	}
+	return "docker.io"
 }

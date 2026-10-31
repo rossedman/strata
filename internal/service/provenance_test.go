@@ -166,3 +166,69 @@ func TestProvenanceNamesMissingBases(t *testing.T) {
 		t.Fatalf("outline roots = %v", names)
 	}
 }
+
+// TestProvenanceBackfill indexes images before provenance is read, as an
+// index built by an older strata, then turns it on: the next crawl reads
+// the provenance of the images it already has, once, and fetches their
+// bases.
+func TestProvenanceBackfill(t *testing.T) {
+	t.Parallel()
+	bases := testreg.Start(t)
+	apps := testreg.Start(t)
+	when := time.Date(2025, 9, 1, 0, 0, 0, 0, time.UTC)
+	bases.Push("base/node:20", bases.Layered("debian", "node-old", when, nil, "RUN install node 20.1"))
+	bases.Push("base/node:20", bases.Layered("debian", "node-new", when, nil, "RUN install node 20.2"))
+	for _, short := range []string{"svc", "gone"} {
+		img := bases.Layered("node-old", short, when, nil, "COPY "+short+" /")
+		apps.PushIndex("team/"+short+":v1", apps.WithProvenance(img, map[string]string{
+			"pkg:docker/" + bases.Host + "/base/node@20": bases.Digest("node-old"),
+		}))
+	}
+	opts := crawl.Options{Registry: apps.Host, Repos: []string{"team/svc", "team/gone"}, Insecure: true, Keychain: authn.NewMultiKeychain()}
+	svc := New(fixture.Open(t, nil))
+	if _, err := svc.Index(ctx, opts); err != nil {
+		t.Fatal(err)
+	}
+	count := func(q string) int {
+		var n int
+		if err := svc.db().QueryRow(q).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	if count(`SELECT count(*) FROM base_refs`) != 0 || count(`SELECT count(*) FROM provenance_checked`) != 0 {
+		t.Fatal("provenance read while off")
+	}
+
+	// One index disappears from the registry before the backfill.
+	var goneIndex string
+	if err := svc.db().QueryRow(`SELECT digest FROM tags WHERE tag = 'v1' AND repo LIKE '%team/gone'`).Scan(&goneIndex); err != nil {
+		t.Fatal(err)
+	}
+	apps.Delete("team/gone@" + goneIndex)
+
+	// The re-crawl covers only svc; the backfill covers every index of
+	// the registry already in the index.
+	opts.Provenance, opts.FetchBases = true, true
+	opts.Repos = []string{"team/svc"}
+	res, err := svc.Index(ctx, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Both indexes are checked, the deleted one as gone; the only new
+	// image is the fetched base.
+	if res.Crawl.ProvenanceBackfilled != 2 || res.Crawl.Images != 1 || res.Crawl.BasesFetched != 1 {
+		t.Fatalf("backfill crawl = %+v", res.Crawl)
+	}
+	if count(`SELECT count(*) FROM base_refs`) != 1 || count(`SELECT count(*) FROM provenance_checked`) != 2 {
+		t.Fatal("backfill did not record provenance")
+	}
+	var parent string
+	if err := svc.db().QueryRow(`SELECT parent FROM lineage WHERE digest = ?`, bases.Digest("svc")).Scan(&parent); err != nil || parent != bases.Digest("node-old") {
+		t.Fatalf("svc's parent = %s, %v; want the old node:20", parent, err)
+	}
+	// Done once: the next crawl reads nothing again.
+	if res, err = svc.Index(ctx, opts); err != nil || res.Crawl.ProvenanceBackfilled != 0 {
+		t.Fatalf("second backfill = %+v, %v", res.Crawl, err)
+	}
+}

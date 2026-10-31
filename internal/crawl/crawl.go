@@ -102,7 +102,10 @@ type Stats struct {
 	// BasesFetched counts bases fetched by digest because provenance
 	// named them; BasesMissing counts those that could not be.
 	BasesFetched int64 `json:"bases_fetched"`
-	BasesMissing int64 `json:"bases_missing"`
+	// ProvenanceBackfilled counts indexes indexed before provenance was
+	// read whose provenance this crawl read.
+	ProvenanceBackfilled int64 `json:"provenance_backfilled"`
+	BasesMissing         int64 `json:"bases_missing"`
 	// Filtered counts what the filter skipped before fetching it.
 	ReposFiltered  int64 `json:"repos_filtered"`
 	TagsFiltered   int64 `json:"tags_filtered"`
@@ -248,6 +251,11 @@ func Crawl(ctx context.Context, st *store.Store, opts Options) (Stats, error) {
 			return c.stats, err
 		}
 	}
+	if opts.Provenance && opts.Registry != "" {
+		if err := c.backfillProvenance(ctx); err != nil {
+			return c.stats, err
+		}
+	}
 	if opts.FetchBases {
 		if err := c.fetchBases(ctx); err != nil {
 			return c.stats, err
@@ -384,6 +392,8 @@ type tagResult struct {
 	index  []model.IndexEntry
 	refs   []model.Referrer
 	bases  []model.BaseRef
+	// checked are the indexes whose provenance was read.
+	checked []string
 }
 
 // crawlRepo lists a repo's tags, records every tag that moved, and fetches
@@ -481,6 +491,7 @@ func (c *crawler) crawlRepo(ctx context.Context, repo name.Repository) error {
 			batch.Index = append(batch.Index, res.index...)
 			batch.Referrers = append(batch.Referrers, res.refs...)
 			batch.BaseRefs = append(batch.BaseRefs, res.bases...)
+			batch.ProvenanceChecked = append(batch.ProvenanceChecked, res.checked...)
 			atomic.AddInt64(&c.stats.Images, int64(len(res.images)))
 			atomic.AddInt64(&c.stats.Referrers, int64(len(res.refs)))
 			return flush()
@@ -686,6 +697,9 @@ func (c *crawler) fetch(ctx context.Context, repo name.Repository, digest v1.Has
 		if err != nil {
 			return fmt.Errorf("read index %s: %w", ref, err)
 		}
+		if c.opts.Provenance {
+			res.checked = append(res.checked, digest.String())
+		}
 		for _, m := range im.Manifests {
 			if isAttestationManifest(m) {
 				if c.opts.Provenance {
@@ -872,7 +886,7 @@ func (c *crawler) crawlExternal(ctx context.Context, s string, external bool) er
 	for _, img := range res.images {
 		img.External = external
 	}
-	b := &store.Batch{Images: res.images, Index: res.index, Referrers: res.refs, BaseRefs: res.bases}
+	b := &store.Batch{Images: res.images, Index: res.index, Referrers: res.refs, BaseRefs: res.bases, ProvenanceChecked: res.checked}
 	if t, ok := ref.(name.Tag); ok {
 		full := RepoName(repo)
 		prev, err := c.st.Tags(ctx, full)

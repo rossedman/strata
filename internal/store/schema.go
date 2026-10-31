@@ -130,6 +130,10 @@ var schema = []string{
 		base_digest VARCHAR,
 		PRIMARY KEY (digest, ref, base_digest)
 	)`,
+	`CREATE TABLE IF NOT EXISTS provenance_checked (
+		digest     VARCHAR PRIMARY KEY,
+		checked_at TIMESTAMPTZ
+	)`,
 	`CREATE TABLE IF NOT EXISTS base_fetches (
 		base_digest VARCHAR PRIMARY KEY,
 		ref         VARCHAR,

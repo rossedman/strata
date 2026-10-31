@@ -526,7 +526,10 @@ type CrawlStats struct {
 	BasesMissing   *int64 `json:"bases_missing,omitempty"`
 	ImagesFiltered int64  `json:"images_filtered"`
 	NewImages      int64  `json:"new_images"`
-	Referrers      int64  `json:"referrers"`
+
+	// ProvenanceBackfilled Already indexed images whose provenance this crawl read
+	ProvenanceBackfilled *int64 `json:"provenance_backfilled,omitempty"`
+	Referrers            int64  `json:"referrers"`
 
 	// Repos Repos crawled so far
 	Repos         int64 `json:"repos"`

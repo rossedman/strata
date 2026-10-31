@@ -87,4 +87,6 @@ When a base cannot be fetched, because it was deleted or strata's credentials ca
     111111111111.dkr.ecr.us-east-1.amazonaws.com/base/python:3.12  not available: … MANIFEST_UNKNOWN …
 ```
 
-To reach bases in another AWS account, give that registry its own credentials; see [Scaling](scaling.md#amazon-ecr). Reading provenance costs two small requests per new multi-platform index.
+Images indexed before strata read provenance get it too, without re-crawling: each crawl reads the provenance of the multi-platform images already indexed from that registry whose provenance was never read, about three small requests each, and only once per image. A stopped crawl resumes where it left off. Images pushed without attestations have no provenance; they are checked once and skipped after.
+
+To reach bases in another AWS account, give that registry its own credentials; see [Scaling](scaling.md#registries-in-several-accounts). Reading provenance costs two small requests per new multi-platform index.

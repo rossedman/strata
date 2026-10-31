@@ -1262,6 +1262,7 @@ components:
         referrers: { type: integer, format: int64 }
         bases_fetched: { type: integer, format: int64, description: "Bases fetched by digest because provenance named them" }
         bases_missing: { type: integer, format: int64, description: "Bases provenance named that could not be fetched" }
+        provenance_backfilled: { type: integer, format: int64, description: "Already indexed images whose provenance this crawl read" }
         repos_filtered: { type: integer, format: int64 }
         tags_filtered: { type: integer, format: int64 }
         images_filtered: { type: integer, format: int64 }

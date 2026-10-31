@@ -129,6 +129,9 @@ type Batch struct {
 	Pushes []model.Push
 	// BaseRefs are the bases builds say images started from.
 	BaseRefs []model.BaseRef
+	// ProvenanceChecked are index digests whose provenance was read, so a
+	// backfill skips them.
+	ProvenanceChecked []string
 	// Run and Done checkpoint repos of a crawl run in the same
 	// transaction as their data, so a resumed crawl never skips a repo
 	// whose rows were lost.
@@ -138,7 +141,7 @@ type Batch struct {
 
 // Len returns the number of records in the batch.
 func (b *Batch) Len() int {
-	return len(b.Images) + len(b.Index) + len(b.Tags) + len(b.DeleteTags) + len(b.Events) + len(b.Referrers) + len(b.Pushes) + len(b.BaseRefs) + len(b.Done)
+	return len(b.Images) + len(b.Index) + len(b.Tags) + len(b.DeleteTags) + len(b.Events) + len(b.Referrers) + len(b.Pushes) + len(b.BaseRefs) + len(b.ProvenanceChecked) + len(b.Done)
 }
 
 // Write stores a batch in one transaction, bulk-loading through DuckDB's
@@ -442,6 +445,14 @@ func writeBatch(conn driver.Conn, b *Batch) error {
 			}
 			return nil
 		}, len(b.BaseRefs)},
+		{"provenance_checked", "INSERT OR IGNORE INTO provenance_checked SELECT DISTINCT * FROM appended_data", func(a *duckdb.Appender) error {
+			for _, d := range b.ProvenanceChecked {
+				if err := a.AppendRow(d, now); err != nil {
+					return err
+				}
+			}
+			return nil
+		}, len(b.ProvenanceChecked)},
 		{"crawl_repos", "INSERT OR REPLACE INTO crawl_repos SELECT * FROM appended_data", func(a *duckdb.Appender) error {
 			for _, repo := range b.Done {
 				if err := a.AppendRow(b.Run, repo, now); err != nil {
@@ -592,6 +603,37 @@ func (s *Store) MissingBases(ctx context.Context, retryAfter time.Time) ([]model
 			return nil, err
 		}
 		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// UncheckedIndex is a multi-platform index whose provenance was never
+// read, and a repo holding it.
+type UncheckedIndex struct {
+	Repo   string
+	Digest string
+}
+
+// UncheckedIndexes returns up to limit indexes in repos under host whose
+// provenance was never read, as for images indexed before strata read
+// provenance.
+func (s *Store) UncheckedIndexes(ctx context.Context, host string, limit int) ([]UncheckedIndex, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT any_value(i.repo), m.index_digest FROM index_manifests m JOIN images i ON i.digest = m.digest
+		WHERE starts_with(i.repo, ? || '/') AND NOT coalesce(i.external, false)
+		  AND m.index_digest NOT IN (SELECT digest FROM provenance_checked)
+		GROUP BY m.index_digest ORDER BY m.index_digest LIMIT ?`, host, limit)
+	if err != nil {
+		return nil, fmt.Errorf("read unchecked indexes: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []UncheckedIndex
+	for rows.Next() {
+		var u UncheckedIndex
+		if err := rows.Scan(&u.Repo, &u.Digest); err != nil {
+			return nil, err
+		}
+		out = append(out, u)
 	}
 	return out, rows.Err()
 }
