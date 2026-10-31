@@ -135,7 +135,30 @@ func (s *Service) Diff(ctx context.Context, since time.Duration, groupBy string,
 		}
 		return out, rows.Err()
 	}
-	for _, gb := range []string{scope, "repo", "root", "label_coverage"} {
+	// Repos and roots that appeared or disappeared are found in SQL from
+	// one metric each: a large registry has a snapshot row per repo per
+	// metric, far too many to read for a weekly diff.
+	for _, gb := range []string{"repo", "root"} {
+		kind := map[string]string{"repo": "repo", "root": "root base"}[gb]
+		appeared, err := s.membership(ctx, gb, d.To, d.From)
+		if err != nil {
+			return nil, err
+		}
+		for _, c := range appeared {
+			d.Changes = append(d.Changes, Change{Kind: "new " + kind, Group: c.Group, To: c.To})
+		}
+		if gb != "repo" {
+			continue
+		}
+		gone, err := s.membership(ctx, gb, d.From, d.To)
+		if err != nil {
+			return nil, err
+		}
+		for _, c := range gone {
+			d.Changes = append(d.Changes, Change{Kind: "removed repo", Group: c.Group, From: c.To})
+		}
+	}
+	for _, gb := range []string{scope, "label_coverage"} {
 		a, err := read(d.From, gb)
 		if err != nil {
 			return nil, err
@@ -144,28 +167,13 @@ func (s *Service) Diff(ctx context.Context, since time.Duration, groupBy string,
 		if err != nil {
 			return nil, err
 		}
-		switch gb {
-		case "repo", "root":
-			kind := map[string]string{"repo": "repo", "root": "root base"}[gb]
-			for k := range b {
-				if _, ok := a[k]; !ok && k.metric == "manifests" {
-					d.Changes = append(d.Changes, Change{Kind: "new " + kind, Group: k.group, To: b[k]})
+		for k, v := range b {
+			if a[k] != v {
+				kind := "metric"
+				if gb == "label_coverage" {
+					kind = "label coverage"
 				}
-			}
-			for k := range a {
-				if _, ok := b[k]; !ok && k.metric == "manifests" && gb == "repo" {
-					d.Changes = append(d.Changes, Change{Kind: "removed repo", Group: k.group, From: a[k]})
-				}
-			}
-		default:
-			for k, v := range b {
-				if a[k] != v {
-					kind := "metric"
-					if gb == "label_coverage" {
-						kind = "label coverage"
-					}
-					d.Changes = append(d.Changes, Change{Kind: kind, Group: k.group, Metric: k.metric, From: a[k], To: v})
-				}
+				d.Changes = append(d.Changes, Change{Kind: kind, Group: k.group, Metric: k.metric, From: a[k], To: v})
 			}
 		}
 	}
@@ -189,6 +197,29 @@ func (s *Service) Diff(ctx context.Context, since time.Duration, groupBy string,
 	}
 	d.DarkRepos = append(d.DarkRepos, dark...)
 	return d, nil
+}
+
+// membership returns the groups of groupBy present on day in but not on
+// day out, with their image counts on day in.
+func (s *Service) membership(ctx context.Context, groupBy, in, out string) ([]Change, error) {
+	rows, err := s.db().QueryContext(ctx, `
+		SELECT b.group_value, b.value FROM snapshots b
+		WHERE b.day = ? AND b.group_by = ? AND b.metric = 'manifests'
+		  AND b.group_value NOT IN (SELECT group_value FROM snapshots WHERE day = ? AND group_by = ? AND metric = 'manifests')`,
+		in, groupBy, out, groupBy)
+	if err != nil {
+		return nil, fmt.Errorf("compare %s snapshots: %w", groupBy, err)
+	}
+	defer func() { _ = rows.Close() }()
+	var outc []Change
+	for rows.Next() {
+		var c Change
+		if err := rows.Scan(&c.Group, &c.To); err != nil {
+			return nil, err
+		}
+		outc = append(outc, c)
+	}
+	return outc, rows.Err()
 }
 
 // Point is one day's value of a metric.

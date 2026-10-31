@@ -38,7 +38,7 @@
   }
   function kindBadge(kind, drift) {
     if (kind === "external") { return '<span class="kind ext">external</span>'; }
-    if (kind === "phantom") { return '<span class="kind ph">not in registry</span>'; }
+    if (kind === "phantom") { return '<span class="kind ph" title="Layers several images share, from a base that is not in the indexed registry. List the base under external in strata.yaml to name it.">not in registry</span>'; }
     if (kind === "unrooted") { return '<span class="kind ph">no parent found</span>'; }
     if (kind === "base") { return drift ? '<span class="kind prev">' + drift + " build" + (drift > 1 ? "s" : "") + " behind</span>" : '<span class="kind">base</span>'; }
     return "";
@@ -80,10 +80,24 @@
   function showTip(x, y, html) { tip.innerHTML = html; tip.hidden = false; tip.style.left = Math.min(x + 14, innerWidth - 360) + "px"; tip.style.top = Math.min(y + 16, innerHeight - tip.offsetHeight - 8) + "px"; }
 
   // ---------- overview ----------
+  // Lineage, staleness and the registry map exist only once the index has
+  // been refreshed. Before that, views say why they are empty and what
+  // happens next, instead of looking broken.
+  function notBuilt(st) { return st && !st.refreshed_at; }
+  function whyEmpty(st) {
+    if (st.refreshing) { return "strata is computing lineage and staleness for the first time. On a large index this takes several minutes; <b>Show latest</b> appears at the top when it is done."; }
+    if (st.running) {
+      var m = Math.round((st.refresh_every_seconds || 0) / 60);
+      return "Lineage and staleness haven't been computed yet. The first refresh starts a minute into the crawl" + (m ? ", then every " + m + " min while it runs" : "") + ".";
+    }
+    return "Lineage and staleness haven't been computed for this index yet. Run <code>strata refresh</code>, or restart <code>strata serve</code> to compute them in the background.";
+  }
+  function pendingHTML(st) { return '<div class="pending" role="status"><b>Not computed yet.</b> ' + whyEmpty(st) + "</div>"; }
+
   function overview(el) {
     el.innerHTML = '<p class="loading">Loading the overview…</p>';
-    Promise.all([api("v1/overview"), api("v1/map", { depth: 3 })]).then(function (r) {
-      var o = r[0], map = r[1];
+    Promise.all([api("v1/overview"), api("v1/map", { depth: 3 }), api("v1/status").catch(function () { return null; })]).then(function (r) {
+      var o = r[0], map = r[1], pending = notBuilt(r[2]) && o.images > 0;
       host = o.host || "";
       $("foot").innerHTML = "Index<b>" + esc(o.host || "all registries") + "</b>" + (o.indexed_at ? "crawled " + ago(o.indexed_at) : "");
       var stale = o.images ? (o.verdicts.stale + o.verdicts.abandoned) / o.images : 0;
@@ -95,16 +109,22 @@
           ["Repos", fmt(o.repos), ""],
           ["Distinct layer stacks", fmt(o.stacks), stacks + "% are retags"],
           ["Stored, deduplicated", bytes(o.dedup_bytes), bytes(o.apparent_bytes) + " as manifests state it"],
-          ["Stale or abandoned", (100 * stale).toFixed(1) + "%", fmt(o.verdicts.stale + o.verdicts.abandoned) + " images"]
+          ["Stale or abandoned", pending ? "—" : (100 * stale).toFixed(1) + "%", pending ? "not computed yet" : fmt(o.verdicts.stale + o.verdicts.abandoned) + " images"]
         ].map(function (k) { return '<div class="kpi"><div class="k">' + k[0] + '</div><div class="v num">' + k[1] + '</div><div class="d">' + k[2] + "</div></div>"; }).join("") + "</div>" +
+        (pending ? pendingHTML(r[2]) : "") +
         '<div class="panel"><header><h2>Staleness mix</h2><span class="pct num">' + fmt(o.images) + ' images</span></header><div class="body"><div class="mix mixbig">' + mixHTML(o.verdicts) + '</div><div class="legend">' +
         V.map(function (v) { return '<span><i class="dot" style="background:' + COL[v] + '"></i>' + v + ' <b class="num" style="color:var(--cream);font-weight:600">' + fmt(o.verdicts[v]) + '</b> <span class="pct">' + (o.images ? (100 * o.verdicts[v] / o.images).toFixed(1) : "0") + "%</span></span>"; }).join("") + "</div></div></div>" +
         '<div class="grid2"><div class="panel"><header><h2>Where the stale images are</h2><span class="pct">stale or abandoned, by root base</span></header><div class="body"><div class="bars">' +
         (o.roots.length ? o.roots.map(function (r) {
           return '<div class="bar" data-focus="' + esc(r.id) + '" data-name="' + esc(r.name) + '" role="button" tabindex="0"><span class="n"><em>' + esc(nice(r.name)) + "</em>" + kindBadge(r.kind) + '</span><span class="c num">' + fmt(r.verdicts.stale + r.verdicts.abandoned) + " of " + short(r.images) + '</span><div class="mix">' + mixHTML(r.verdicts) + "</div></div>";
-        }).join("") : '<p class="empty-state">No root bases yet. Run strata index.</p>') + "</div></div></div>" +
+        }).join("") : '<p class="empty-state">' + (pending ? "Root bases appear once lineage is computed." : "No root bases yet. Run strata index.") + "</p>") + "</div></div></div>" +
         '<div class="panel"><header><h2>This week</h2>' + cmdHTML("strata diff --since 7d") + '</header><div class="body"><ul class="changes">' + changesHTML(o.changes) + "</ul></div></div></div>" +
         '<div class="panel"><header><h2>Registry map</h2><span class="pct">root bases left, descendants right · sized by images · colored by stale share · click to open in Lineage</span></header><div class="body ice"><div class="cols" id="icecols"></div><canvas id="ice" height="420" aria-label="Icicle chart of root bases and their descendants"></canvas></div></div>';
+      if (!map.length) {
+        $("icecols").innerHTML = "";
+        $("ice").outerHTML = '<p class="empty-state">' + (pending ? "The registry map appears once lineage is computed." : "Nothing indexed yet. Run strata index.") + "</p>";
+        return;
+      }
       drawIce(map);
     }).catch(function (e) { el.innerHTML = '<p class="loading err">Could not load the overview: ' + esc(e.message) + "</p>"; });
   }
@@ -198,6 +218,7 @@
     var isRepo = key.indexOf("repo|") === 0;
     api("v1/outline", { parent: key, only_stale: L.stale ? "true" : "", offset: c.rows.length, limit: isRepo ? IMG_PAGE : PAGE }).then(function (o) {
       c.rows = c.rows.concat(o.rows); c.total = o.total; c.loading = false;
+      if (!key && $("exthint")) { $("exthint").hidden = !c.rows.some(function (r) { return r.kind === "phantom"; }); }
       o.rows.forEach(function (r) { if (r.kind !== "image") { L.names[r.id] = r.name; } });
       renderOutline();
     }).catch(function (e) { c.loading = false; c.error = e.message; renderOutline(); });
@@ -227,6 +248,8 @@
       L.focus = focus; L.stale = stale;
       el.innerHTML =
         '<div class="head"><div><h1>Lineage</h1><nav class="crumbs" id="crumbs" aria-label="Focus"></nav></div><span id="lincmd"></span></div>' +
+        '<p class="pending" id="exthint" hidden>Some images are built on bases that are not in this registry, such as images from Docker Hub or public ECR, so their roots show as <b>not in registry</b>. ' +
+        'List those bases under <code>external:</code> in strata.yaml (for example <code>docker.io/library/debian:bookworm-slim</code>) and they are fetched on the next index and named here.</p>' +
         '<div class="panel"><header><div class="toolbar"><div class="seg" role="group" aria-label="Show">' +
         '<button type="button" data-show="all" aria-pressed="' + !stale + '">All images</button><button type="button" data-show="stale" aria-pressed="' + stale + '">Only stale</button></div>' +
         '<div class="seg" role="group" aria-label="Expand"><button type="button" id="collapse">Collapse all</button></div></div><span class="pct num" id="rowsinfo"></span></header>' +
@@ -256,7 +279,9 @@
     var top = vp.scrollTop, h = vp.clientHeight, from = Math.max(0, Math.floor(top / ROW) - 8), to = Math.min(rows.length, Math.ceil((top + h) / ROW) + 8);
     var html = "";
     for (var i = from; i < to; i++) { html += rowHTML(rows[i], i); }
-    if (!rows.length && L.children[L.focus] && !L.children[L.focus].loading) { html = '<div class="empty-state">' + (L.stale ? "Nothing stale here." : "Nothing indexed yet. Run strata index.") + "</div>"; }
+    if (!rows.length && L.children[L.focus] && !L.children[L.focus].loading) {
+      html = notBuilt(lastStatus) ? '<div class="empty-state">' + pendingHTML(lastStatus) + "</div>" : '<div class="empty-state">' + (L.stale ? "Nothing stale here." : "Nothing indexed yet. Run strata index.") + "</div>";
+    }
     spacer.innerHTML = html;
   }
   function indent(d) { var s = '<span class="indent">'; for (var i = 0; i < d; i++) { s += "<i></i>"; } return s + "</span>"; }
@@ -329,7 +354,8 @@
     Object.keys(sel).forEach(function (k) { p[k] = sel[k]; });
     api("v1/search", p).then(function (res) {
       $("qerr").hidden = true;
-      $("searchsub").textContent = fmt(res.total) + " images match" + (q || Object.keys(sel).some(function (k) { return sel[k].length; }) ? "" : " (no filter)") + " · facet counts update with every choice";
+      $("searchsub").textContent = fmt(res.total) + " images match" + (q || Object.keys(sel).some(function (k) { return sel[k].length; }) ? "" : " (no filter)") + " · facet counts update with every choice" +
+        (notBuilt(lastStatus) ? " · verdicts and lineage fields are empty, and searches slower, until the first refresh" : "");
       $("searchcmd").innerHTML = cmdHTML("strata query '" + res.filter.replace(/'/g, "'\\''") + "'");
       $("facets").innerHTML = res.facets.map(function (f) {
         if (!f.values.length) { return ""; }
@@ -455,11 +481,13 @@
   // strata serve --reindex-every crawls in the background. While it runs,
   // every view answers from what is indexed so far; this banner shows the
   // crawl's progress and offers to reload once the views refresh.
-  var shown = null;
+  var shown = null, lastStatus = null;
   function clock(iso) { return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); }
   function pollStatus() {
     api("v1/status").then(function (st) {
       var bar = $("indexing"), c = st.crawl, refreshed = st.refreshed_at || "";
+      var before = lastStatus;
+      lastStatus = st;
       if (shown === null) { shown = refreshed; }
       var newer = refreshed !== shown;
       bar.classList.toggle("err", !st.running && !!st.error);
@@ -473,10 +501,15 @@
           (newer ? '<button type="button" id="ilatest">Show latest</button>' : "");
       } else if (st.error) {
         bar.innerHTML = '<span class="err">Indexing ' + esc(nice(st.registry || "")) + " failed: " + esc(st.error) + "</span>" + (newer ? '<button type="button" id="ilatest">Show latest</button>' : "");
+      } else if (st.refreshing) {
+        bar.innerHTML = "<span>Computing lineage and staleness" + (refreshed ? "" : " for the first time") + '…</span><span class="when">On a large index this takes several minutes.</span>';
       } else if (newer) {
-        bar.innerHTML = "<span>Indexing finished: <b>" + fmt(c.new_images) + "</b> new images</span>" + '<button type="button" id="ilatest">Show latest</button>';
+        bar.innerHTML = (c.repos_total ? "<span>Indexing finished: <b>" + fmt(c.new_images) + "</b> new images</span>" : "<span>Lineage and staleness are up to date.</span>") + '<button type="button" id="ilatest">Show latest</button>';
       }
-      bar.hidden = !st.running && !st.error && !newer;
+      bar.hidden = !st.running && !st.error && !st.refreshing && !newer;
+      // The first status can arrive after a view has rendered its empty
+      // state; render it again with the reason.
+      if (!before && notBuilt(st)) { route(); }
       var b = $("ilatest");
       if (b) { b.onclick = function () { location.reload(); }; }
       setTimeout(pollStatus, st.running ? 5000 : 60000);

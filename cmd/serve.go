@@ -67,6 +67,16 @@ read-only.`,
 		defer cancel()
 		if every := state.V.GetDuration("reindex-every"); every > 0 {
 			loop.Go(func() { reindexLoop(ctx, svc, every) })
+		} else if need, err := svc.NeedsRefresh(ctx); err == nil && need {
+			// An index run stopped before its refresh leaves lineage,
+			// staleness and the views unbuilt; build them now, in the
+			// background, so the UI fills in instead of staying empty.
+			loop.Go(func() {
+				state.Logger.Info("computing lineage and staleness for the existing index")
+				if err := svc.Refresh(ctx); err != nil && ctx.Err() == nil {
+					state.Logger.Error("refresh failed", "err", err)
+				}
+			})
 		}
 		srv := &http.Server{Addr: c.Addr, Handler: h, ReadHeaderTimeout: api.ReadHeaderTimeout}
 		ln, err := net.Listen("tcp", c.Addr)

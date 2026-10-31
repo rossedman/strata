@@ -159,7 +159,7 @@ Set `provider: distribution` to crawl an ECR host through the plain registry pro
 
 - A banner at the top of the UI shows the registry, the repos done out of the total and the new images so far. It offers **Show latest** when the views have refreshed since the page loaded.
 - Every view answers from what is indexed so far. Crawled rows are written every few seconds.
-- Lineage, staleness and the views refresh every `--refresh-every` (default 10 minutes) while the crawl finds new images, and once more when it finishes. A refresh during a first crawl writes most of the index, so each one waits at least as long as the last took before the next starts. At 2 million images, `--refresh-every 30m` keeps refreshes from slowing the crawl. `--refresh-every 0` refreshes only at the end.
+- Lineage, staleness and the views are first computed a minute into the crawl, then every `--refresh-every` (default 10 minutes) while the crawl finds new images, and once more when it finishes. A refresh during a first crawl writes most of the index, so each one waits at least as long as the last took before the next starts. At 2 million images, `--refresh-every 30m` keeps refreshes from slowing the crawl. `--refresh-every 0` refreshes only at the end.
 - `GET /v1/status` returns the same progress as JSON, for monitoring.
 
 Until a base image's repo is crawled, images built on it are grouped under "Shared layers, image not in the registry" in the UI. They move under the base's name at the next refresh after its repo is indexed. To have bases named from the start, crawl them first:
@@ -172,6 +172,21 @@ strata serve --reindex-every 6h
 A crawl is resumable. If the server stops part way through, the next crawl skips the repos the last one finished and picks up the rest. Each repo is checkpointed in the same transaction as its data.
 
 While the server runs, it holds the index file, and read commands such as `strata query` and `strata stale` route through it. See [Serving, API and MCP](serving.md#one-owner-of-the-index).
+
+## When screens are empty
+
+Lineage, staleness, root bases and the registry map are computed by a refresh, not by the crawl. Until the first refresh of an index finishes, those views say **Not computed yet** and explain what happens next; image counts and search already work, more slowly. On a large index the first refresh takes minutes.
+
+- **An index run was stopped before it finished.** Its images are in the file but have never been refreshed. `strata serve` notices this at startup and computes them in the background; from the command line, run `strata refresh`.
+- **Root bases show as "not in registry".** The images are built on bases outside the indexed registry, such as Docker Hub or public ECR images, which is usual for ECR. strata still groups everything built on the same base, but cannot name it. List those bases under `external` in strata.yaml and they are fetched on the next index:
+
+  ```yaml
+  external:
+    - docker.io/library/debian:bookworm-slim
+    - public.ecr.aws/docker/library/alpine:3.20
+  ```
+
+`GET /v1/status` shows whether a refresh is running (`refreshing`), when the last one finished (`refreshed_at`, unset if never) and what it did (`last_refresh`).
 
 ## Re-crawls
 

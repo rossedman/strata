@@ -90,3 +90,39 @@ func TestRefreshDuringSkipsIdleTicks(t *testing.T) {
 		t.Fatal("new images did not trigger a refresh")
 	}
 }
+
+func TestFirstRefreshComesEarly(t *testing.T) {
+	// Not parallel: it changes firstRefreshAfter.
+	svc := New(fixture.Open(t, fixture.Org(50)))
+	if need, err := svc.NeedsRefresh(context.Background()); err != nil || !need {
+		t.Fatalf("an unrefreshed index should need a refresh: %v, %v", need, err)
+	}
+	if st := svc.Status(); st.RefreshedAt != nil || st.Refreshing {
+		t.Fatalf("status before any refresh = %+v", st)
+	}
+	orig := firstRefreshAfter
+	firstRefreshAfter = 10 * time.Millisecond
+	t.Cleanup(func() { firstRefreshAfter = orig })
+	svc.RefreshEvery = time.Hour
+	svc.update(func(st *IndexStatus) { st.Crawl.Images = 50 })
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { svc.refreshDuring(ctx); close(done) }()
+	deadline := time.Now().Add(10 * time.Second)
+	for svc.Status().RefreshedAt == nil && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	<-done
+	st := svc.Status()
+	if st.RefreshedAt == nil || st.Refreshing {
+		t.Fatalf("the first refresh did not come early: %+v", st)
+	}
+	if need, _ := svc.NeedsRefresh(context.Background()); need {
+		t.Fatal("a refreshed index still needs a refresh")
+	}
+	// A new service on the same file knows when the views were built.
+	if again := New(svc.Store).Status(); again.RefreshedAt == nil || !again.RefreshedAt.Equal(*st.RefreshedAt) {
+		t.Fatalf("refreshed_at after reopening = %v, want %v", again.RefreshedAt, st.RefreshedAt)
+	}
+}
