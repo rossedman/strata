@@ -11,6 +11,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.33.12
 	github.com/aws/aws-sdk-go-v2/credentials v1.20.12
 	github.com/aws/aws-sdk-go-v2/service/ecr v1.67.1
+	github.com/aws/aws-sdk-go-v2/service/sts v1.51.6
 	github.com/charmbracelet/colorprofile v0.4.3
 	github.com/duckdb/duckdb-go/v2 v2.20000.0
 	github.com/getkin/kin-openapi v0.152.0
@@ -48,7 +49,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/signin v1.12.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sso v1.39.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.44.0 // indirect
-	github.com/aws/aws-sdk-go-v2/service/sts v1.51.6 // indirect
 	github.com/aws/smithy-go v1.28.7 // indirect
 	github.com/charmbracelet/ultraviolet v0.0.0-20260811164956-006e29f97886 // indirect
 	github.com/charmbracelet/x/ansi v0.11.8 // indirect

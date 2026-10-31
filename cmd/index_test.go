@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -42,8 +43,8 @@ func TestCrawlOptionsECR(t *testing.T) {
 	const host = "123456789012.dkr.ecr.us-east-1.amazonaws.com"
 	orig := newECR
 	t.Cleanup(func() { newECR = orig })
-	newECR = func(ctx context.Context, h string) (*ecr.Registry, error) {
-		return ecr.NewWithAPI(ctx, h, "123456789012", nil), nil
+	newECR = func(ctx context.Context, r config.Registry) (*ecr.Registry, error) {
+		return ecr.NewWithAPI(ctx, r.Host, "123456789012", nil), nil
 	}
 	opts, err := crawlOptions(context.Background(), config.Registry{Host: host, PushedSince: "30d"})
 	if err != nil {
@@ -55,12 +56,45 @@ func TestCrawlOptionsECR(t *testing.T) {
 	if opts, err := crawlOptions(context.Background(), config.Registry{Host: host, Provider: config.ProviderDistribution}); err != nil || opts.Lister != nil {
 		t.Fatalf("provider distribution should use the plain API: %+v, %v", opts, err)
 	}
-	newECR = func(context.Context, string) (*ecr.Registry, error) { return nil, errors.New("no AWS config") }
+	newECR = func(context.Context, config.Registry) (*ecr.Registry, error) { return nil, errors.New("no AWS config") }
 	if _, err := crawlOptions(context.Background(), config.Registry{Host: host}); err == nil {
 		t.Fatal("an ECR client error should fail")
 	}
 	if _, err := crawlOptions(context.Background(), config.Registry{Host: "reg.io", PushedSince: "nope"}); err == nil {
 		t.Fatal("a bad filter should fail")
+	}
+}
+
+func TestRegistryOptionsShareECRCredentials(t *testing.T) {
+	isolate(t)
+	mustRun(t, "version")
+	orig := newECR
+	t.Cleanup(func() { newECR = orig })
+	var got []config.Registry
+	newECR = func(ctx context.Context, r config.Registry) (*ecr.Registry, error) {
+		got = append(got, r)
+		return ecr.NewWithAPI(ctx, r.Host, "111111111111", nil), nil
+	}
+	regs := []config.Registry{
+		{Host: "111111111111.dkr.ecr.us-east-1.amazonaws.com", AWSProfile: "bases"},
+		{Host: "222222222222.dkr.ecr.us-east-1.amazonaws.com", AssumeRole: "arn:aws:iam::222222222222:role/read"},
+		{Host: "reg.io"},
+	}
+	all, err := registryOptions(context.Background(), regs)
+	if err != nil || len(all) != 3 {
+		t.Fatalf("options = %v, %v", all, err)
+	}
+	if len(got) != 2 || got[0].AWSProfile != "bases" || got[1].AssumeRole == "" {
+		t.Fatalf("ECR clients built with %+v", got)
+	}
+	for i, o := range all {
+		if o.Keychain == nil {
+			t.Errorf("registry %d has no keychain", i)
+		}
+	}
+	newECR = func(context.Context, config.Registry) (*ecr.Registry, error) { return nil, errors.New("no profile") }
+	if _, err := registryOptions(context.Background(), regs); err == nil || !strings.Contains(err.Error(), "111111111111") {
+		t.Fatalf("err = %v", err)
 	}
 }
 
