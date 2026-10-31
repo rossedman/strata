@@ -103,7 +103,7 @@ registries:
 | `include-repos`, `exclude-repos` | whole repos | the tag listing and everything under it |
 | `include-tags`, `exclude-tags` | tags | the `HEAD` and, for new images, the manifest and config |
 | `platforms` | other platforms in a multi-platform index | that platform's manifest, config and referrers |
-| `pushed-since` | images pushed before the window (ECR only) | the manifest and config |
+| `pushed-since` | images pushed before the window (registry APIs only) | the manifest and config |
 
 The same settings are flags on `strata index`: `--include-repo`, `--exclude-repo`, `--include-tag`, `--exclude-tag`, `--platforms` and `--pushed-since`, each repeatable where it takes a list.
 
@@ -153,6 +153,41 @@ Credentials come from the standard AWS chain: environment variables, `AWS_PROFIL
 ```
 
 Set `provider: distribution` to crawl an ECR host through the plain registry protocol instead, for example when the identity can pull but not describe. Push and pull times and `pushed-since` aren't available then.
+
+## Harbor, Artifact Registry and ACR
+
+Three more registries have list APIs that resolve tags without a request
+each. Like ECR, each listing page covers many manifests with their tags and
+push times, so a re-crawl costs a page per 100 or 1,000 images instead of a
+`HEAD` per tag, and `pushed-since` works. None of them has a batch manifest
+call like `BatchGetImage`, so new images still cost a manifest and a config
+request each.
+
+| | Harbor | Google Artifact Registry | Azure Container Registry |
+| --- | --- | --- | --- |
+| Detected from the host | no: set `provider: harbor` | `*-docker.pkg.dev` | `*.azurecr.io` |
+| Listing | `/api/v2.0` artifacts, 100 per page | `dockerImages`, 1,000 per page | `/acr/v1/<repo>/_manifests`, 1,000 per page |
+| Push times | yes | upload time | created time |
+| Pull times | yes, feeding `stale.last_pulled` | no | no |
+| Signatures and SBOMs | Harbor accessories, from the listing | referrers requests | referrers requests |
+| Credentials | the Docker config, such as a robot account | application default credentials or gcloud | the Docker config: `az acr login`, a token or a service principal |
+
+```yaml
+registries:
+  - host: harbor.example.com
+    provider: harbor
+  - host: us-docker.pkg.dev
+    projects: [acme-prod, acme-shared]   # Google Cloud projects to list
+  - host: acme.azurecr.io
+    pushed-since: 1y
+```
+
+Artifact Registry lists repositories per project and location, so it needs
+`projects`, or `repos` seeded as `project/repository/image`. Listing one
+image's repository lists every image in that repository, which strata
+holds until each image's turn. The identity needs
+`artifactregistry.repositories.list` and `artifactregistry.dockerimages.list`
+(the Artifact Registry Reader role).
 
 ## Index in the background
 

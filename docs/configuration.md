@@ -31,7 +31,11 @@ registries:
     exclude-repos: ["**/sandbox"]
     exclude-tags: ["pr-*", "sha-*"]
     platforms: [linux/amd64]       # skip other platforms of multi-arch images
-    pushed-since: 1y               # ECR only: skip images pushed before this
+    pushed-since: 1y               # registry APIs only: skip images pushed before this
+  - host: harbor.example.com
+    provider: harbor               # Harbor's API: push and pull times
+  - host: us-docker.pkg.dev
+    projects: [acme-prod]          # Artifact Registry: projects to list
 
 # Upstream bases fetched so roots resolve to names.
 external:
@@ -86,13 +90,14 @@ log-level: info
 | `registries[].insecure` | `false` | Allow plain HTTP |
 | `registries[].workers` | `16` | Concurrent requests |
 | `registries[].rate` | `0` | Requests per second, 0 is unlimited |
-| `registries[].provider` | `auto` | `auto` lists ECR hosts through the ECR API; `ecr` forces it; `distribution` uses the plain registry API everywhere |
+| `registries[].provider` | `auto` | `auto` lists ECR, Artifact Registry and ACR hosts through their APIs; `ecr`, `harbor`, `gar` and `acr` force one; `distribution` uses the plain registry API |
+| `registries[].projects` | `[]` | Google Cloud projects whose Artifact Registry repositories are listed |
 | `registries[].include-repos` | all | Crawl only repos matching one of these globs |
 | `registries[].exclude-repos` | `[]` | Skip repos matching one of these globs |
 | `registries[].include-tags` | all | Crawl only tags matching one of these globs |
 | `registries[].exclude-tags` | `[]` | Skip tags matching one of these globs |
 | `registries[].platforms` | all | Keep only these platforms of multi-platform images |
-| `registries[].pushed-since` | | Skip images pushed longer ago than this, such as `90d` (ECR only) |
+| `registries[].pushed-since` | | Skip images pushed longer ago than this, such as `90d` (registry APIs only) |
 | `external` | `[]` | Full refs of upstream bases to fetch |
 | `referrers` | `true` | Fetch referrers and cosign tags |
 | `platform` | `linux/amd64` | Default platform for multi-platform refs |

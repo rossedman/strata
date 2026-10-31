@@ -64,6 +64,37 @@ func TestCrawlOptionsECR(t *testing.T) {
 	}
 }
 
+func TestCrawlOptionsAPIs(t *testing.T) {
+	isolate(t)
+	mustRun(t, "version")
+	for _, r := range []config.Registry{
+		{Host: "harbor.example.com", Provider: config.ProviderHarbor},
+		{Host: "us-docker.pkg.dev", Projects: []string{"acme"}},
+		{Host: "acme.azurecr.io"},
+	} {
+		opts, err := crawlOptions(context.Background(), r)
+		if err != nil || opts.Lister == nil {
+			t.Errorf("%s: options = %+v, %v", r.Host, opts, err)
+		}
+	}
+	for _, r := range []config.Registry{
+		{Host: "bad host!", Provider: config.ProviderHarbor},
+		{Host: "bad host!", Provider: config.ProviderACR},
+		{Host: "gcr.io", Provider: config.ProviderGAR},
+	} {
+		if _, err := crawlOptions(context.Background(), r); err == nil {
+			t.Errorf("%s: bad host accepted", r.Host)
+		}
+	}
+	tok := googleToken(context.Background(), "us-docker.pkg.dev")
+	if _, err := tok(); err == nil {
+		t.Log("Google credentials are available here; token lookup succeeded")
+	}
+	if _, err := googleToken(context.Background(), "bad host!")(); err == nil {
+		t.Fatal("bad host accepted")
+	}
+}
+
 func TestIndexFilterFlagsOnConfiguredRegistries(t *testing.T) {
 	isolate(t)
 	r := testreg.Start(t)
