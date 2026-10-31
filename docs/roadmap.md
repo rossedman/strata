@@ -15,12 +15,13 @@ strata v0.1 implements the core of the design: indexing, lineage, staleness, the
 - `strata mcp` over stdio
 - A web UI served by `strata serve` and `strata ui`: an overview, a lineage outline that loads one level at a time, search with facet counts, and an image page, backed by per-subtree counts and a materialized image table so it stays fast at millions of images
 - Cleanup recommendations with reclaimable storage after shared layers, and generated ECR lifecycle policies checked against the index
+- Listing through the ECR, Harbor, Google Artifact Registry and Azure Container Registry APIs, with push times, and pull times on ECR and Harbor
 
 ## Next
 
 - **Webhooks and `strata watch`**: normalize Harbor, ECR (via EventBridge), distribution notifications and Artifactory events into push, delete and tag-move events, so the index stays current within a minute.
 - **Incremental staleness**: when a tag moves, re-evaluate only that image's descendants instead of the whole index.
-- **Pull data**: registry adapters for pull timestamps (Harbor, ECR, Artifactory) to drive the last-pulled and leaf-with-no-use signals.
+- **Pull data**: registry adapters for pull timestamps (Artifactory) to drive the last-pulled and leaf-with-no-use signals.
 - **SBOM-based EOL detection**: read the OS release from SBOM referrers instead of relying only on a curated roots list.
 
 ## Later
