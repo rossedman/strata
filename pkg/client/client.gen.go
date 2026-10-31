@@ -61,6 +61,24 @@ func (e BaseVersionSource) Valid() bool {
 	}
 }
 
+// Defines values for CleanupScope.
+const (
+	CleanupScopeRegistry CleanupScope = "registry"
+	CleanupScopeRepo     CleanupScope = "repo"
+)
+
+// Valid indicates whether the value is a known member of the CleanupScope enum.
+func (e CleanupScope) Valid() bool {
+	switch e {
+	case CleanupScopeRegistry:
+		return true
+	case CleanupScopeRepo:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for EdgeConfidence.
 const (
 	EdgeConfidenceDeclared EdgeConfidence = "declared"
@@ -139,6 +157,27 @@ const (
 func (e HealthStatus) Valid() bool {
 	switch e {
 	case Ok:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ImpactImageEvidence.
+const (
+	BuiltOn   ImpactImageEvidence = "built on"
+	Inherited ImpactImageEvidence = "inherited"
+	Scan      ImpactImageEvidence = "scan"
+)
+
+// Valid indicates whether the value is a known member of the ImpactImageEvidence enum.
+func (e ImpactImageEvidence) Valid() bool {
+	switch e {
+	case BuiltOn:
+		return true
+	case Inherited:
+		return true
+	case Scan:
 		return true
 	default:
 		return false
@@ -274,6 +313,42 @@ func (e Verdict) Valid() bool {
 	}
 }
 
+// Defines values for GetCleanupParamsScope.
+const (
+	GetCleanupParamsScopeRegistry GetCleanupParamsScope = "registry"
+	GetCleanupParamsScopeRepo     GetCleanupParamsScope = "repo"
+)
+
+// Valid indicates whether the value is a known member of the GetCleanupParamsScope enum.
+func (e GetCleanupParamsScope) Valid() bool {
+	switch e {
+	case GetCleanupParamsScopeRegistry:
+		return true
+	case GetCleanupParamsScopeRepo:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GetCleanupParamsFormat.
+const (
+	GetCleanupParamsFormatCsv  GetCleanupParamsFormat = "csv"
+	GetCleanupParamsFormatJson GetCleanupParamsFormat = "json"
+)
+
+// Valid indicates whether the value is a known member of the GetCleanupParamsFormat enum.
+func (e GetCleanupParamsFormat) Valid() bool {
+	switch e {
+	case GetCleanupParamsFormatCsv:
+		return true
+	case GetCleanupParamsFormatJson:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for SearchParamsAge.
 const (
 	SearchParamsAgeGreaterThan1Year SearchParamsAge = "> 1 year"
@@ -328,6 +403,42 @@ func (e SearchParamsPushed) Valid() bool {
 	}
 }
 
+// Defines values for GetVulnBasesParamsSeverity.
+const (
+	Critical GetVulnBasesParamsSeverity = "critical"
+	High     GetVulnBasesParamsSeverity = "high"
+)
+
+// Valid indicates whether the value is a known member of the GetVulnBasesParamsSeverity enum.
+func (e GetVulnBasesParamsSeverity) Valid() bool {
+	switch e {
+	case Critical:
+		return true
+	case High:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GetVulnImpactParamsFormat.
+const (
+	GetVulnImpactParamsFormatCsv  GetVulnImpactParamsFormat = "csv"
+	GetVulnImpactParamsFormatJson GetVulnImpactParamsFormat = "json"
+)
+
+// Valid indicates whether the value is a known member of the GetVulnImpactParamsFormat enum.
+func (e GetVulnImpactParamsFormat) Valid() bool {
+	switch e {
+	case GetVulnImpactParamsFormatCsv:
+		return true
+	case GetVulnImpactParamsFormatJson:
+		return true
+	default:
+		return false
+	}
+}
+
 // BaseVersion One digest a base tag has held, and how much is built on it
 type BaseVersion struct {
 	Children    int                   `json:"children"`
@@ -354,6 +465,55 @@ type Change struct {
 	To     float32 `json:"to"`
 }
 
+// Cleanup Deletion candidates and what deleting them frees
+type Cleanup struct {
+	Candidates []CleanupCandidate `json:"candidates"`
+
+	// Held Matching images kept because kept images are built on them or share their index
+	Held int `json:"held"`
+
+	// Images Platform images in the candidates
+	Images int `json:"images"`
+
+	// ReclaimableBytes Layers freed, each once, none a kept image uses
+	ReclaimableBytes int64         `json:"reclaimable_bytes"`
+	Repos            []CleanupRepo `json:"repos"`
+	Scope            CleanupScope  `json:"scope"`
+
+	// Size Sizes the manifests state, a shared layer counted per image
+	Size int64 `json:"size"`
+
+	// Total Candidates: manifests or whole indexes
+	Total int    `json:"total"`
+	Where string `json:"where"`
+}
+
+// CleanupScope defines model for Cleanup.Scope.
+type CleanupScope string
+
+// CleanupCandidate A manifest or index that can be deleted
+type CleanupCandidate struct {
+	Digest string `json:"digest"`
+
+	// ExclusiveBytes Freed by deleting this candidate alone
+	ExclusiveBytes int64  `json:"exclusive_bytes"`
+	Images         int    `json:"images"`
+	LastPulledDays *int   `json:"last_pulled_days"`
+	PushedDays     *int   `json:"pushed_days"`
+	Reason         string `json:"reason"`
+	Repo           string `json:"repo"`
+	Size           int64  `json:"size"`
+	Verdict        string `json:"verdict"`
+}
+
+// CleanupRepo Candidates of one repo
+type CleanupRepo struct {
+	Candidates       int    `json:"candidates"`
+	ReclaimableBytes int64  `json:"reclaimable_bytes"`
+	Repo             string `json:"repo"`
+	Size             int64  `json:"size"`
+}
+
 // ConfigInfo Run-time fields from the image config; environment values are never stored except allowlisted ones
 type ConfigInfo struct {
 	Cmd         []string           `json:"cmd"`
@@ -369,6 +529,8 @@ type ConfigInfo struct {
 
 // CrawlStats Running totals of a crawl
 type CrawlStats struct {
+	// Findings Scans whose findings were fetched
+	Findings       int64 `json:"findings"`
 	ImagesFiltered int64 `json:"images_filtered"`
 	NewImages      int64 `json:"new_images"`
 	Referrers      int64 `json:"referrers"`
@@ -381,8 +543,11 @@ type CrawlStats struct {
 	ReposResumed int64 `json:"repos_resumed"`
 
 	// ReposTotal Repos this crawl visits, once listed
-	ReposTotal   int64 `json:"repos_total"`
-	Requests     int64 `json:"requests"`
+	ReposTotal int64 `json:"repos_total"`
+	Requests   int64 `json:"requests"`
+
+	// Scans Vulnerability scans the registry listed
+	Scans        int64 `json:"scans"`
 	TagMoves     int64 `json:"tag_moves"`
 	Tags         int64 `json:"tags"`
 	TagsFiltered int64 `json:"tags_filtered"`
@@ -522,6 +687,54 @@ type ImageInfo struct {
 	TopChainId string     `json:"top_chain_id"`
 }
 
+// Impact The blast radius of a base or a vulnerability
+type Impact struct {
+	GroupBy string         `json:"group_by"`
+	Groups  []ImpactGroup  `json:"groups"`
+	Images  []ImpactImage  `json:"images"`
+	InUse   int            `json:"in_use"`
+	Origins []ImpactOrigin `json:"origins"`
+	Target  string         `json:"target"`
+
+	// Total Affected images, before the limit
+	Total int `json:"total"`
+}
+
+// ImpactGroup Affected images with one group-by value
+type ImpactGroup struct {
+	Images int    `json:"images"`
+	InUse  int    `json:"in_use"`
+	Repos  int    `json:"repos"`
+	Value  string `json:"value"`
+}
+
+// ImpactImage One affected image
+type ImpactImage struct {
+	Critical       *int                `json:"critical"`
+	Digest         string              `json:"digest"`
+	Evidence       ImpactImageEvidence `json:"evidence"`
+	Group          string              `json:"group"`
+	High           *int                `json:"high"`
+	InUse          bool                `json:"in_use"`
+	LastPulledDays *int                `json:"last_pulled_days"`
+	Ref            string              `json:"ref"`
+	Repo           string              `json:"repo"`
+	Stale          string              `json:"stale"`
+
+	// Via The origin it is affected through
+	Via string `json:"via"`
+}
+
+// ImpactImageEvidence defines model for ImpactImage.Evidence.
+type ImpactImageEvidence string
+
+// ImpactOrigin An image a vulnerability enters through
+type ImpactOrigin struct {
+	Digest string `json:"digest"`
+	Images int    `json:"images"`
+	Ref    string `json:"ref"`
+}
+
 // IndexStatus State of the running or last index
 type IndexStatus struct {
 	// Crawl Running totals of a crawl
@@ -555,6 +768,44 @@ type LayerInfo struct {
 	Position   int    `json:"position"`
 	SharedBy   int    `json:"shared_by"`
 	Size       int64  `json:"size"`
+}
+
+// Lifecycle A generated ECR lifecycle policy for one repo, checked against the index
+type Lifecycle struct {
+	// Agree Of those, images strata lists for cleanup
+	Agree     int `json:"agree"`
+	Conflicts []struct {
+		Digest string `json:"digest"`
+		Reason string `json:"reason"`
+	} `json:"conflicts"`
+	Days int `json:"days"`
+
+	// Expires Images the rule would expire today
+	Expires int `json:"expires"`
+
+	// Name The repository name ECR uses, without the host
+	Name string `json:"name"`
+
+	// Policy The lifecycle policy document, or null when the repo is skipped
+	Policy *struct {
+		Rules []struct {
+			Action struct {
+				Type string `json:"type"`
+			} `json:"action"`
+			Description  string `json:"description"`
+			RulePriority int    `json:"rulePriority"`
+			Selection    struct {
+				CountNumber int     `json:"countNumber"`
+				CountType   string  `json:"countType"`
+				CountUnit   *string `json:"countUnit,omitempty"`
+				TagStatus   string  `json:"tagStatus"`
+			} `json:"selection"`
+		} `json:"rules"`
+	} `json:"policy"`
+	Repo string `json:"repo"`
+
+	// Skipped Why the repo has no policy
+	Skipped *string `json:"skipped,omitempty"`
 }
 
 // LineageInfo Where an image sits in the lineage graph, with the evidence for its parent
@@ -795,6 +1046,30 @@ type VerdictCounts struct {
 	Stale     int64 `json:"stale"`
 }
 
+// VulnBase A base whose scan found vulnerabilities, and what is built on it
+type VulnBase struct {
+	Critical int    `json:"critical"`
+	Digest   string `json:"digest"`
+
+	// Fixable Vulnerabilities with a fixed version; set when findings were fetched
+	Fixable *int `json:"fixable,omitempty"`
+
+	// Groups Distinct group-by values (teams) among them
+	Groups int `json:"groups"`
+	High   int `json:"high"`
+
+	// Images Images built on the base, at any depth
+	Images int `json:"images"`
+
+	// InUse Of those, images pulled within the in-use window
+	InUse int    `json:"in_use"`
+	Ref   string `json:"ref"`
+	Repo  string `json:"repo"`
+
+	// Vulnerable Of those, images whose own scan has findings of the severity
+	Vulnerable int `json:"vulnerable"`
+}
+
 // Budget defines model for Budget.
 type Budget = int
 
@@ -803,6 +1078,9 @@ type Filter = string
 
 // GroupBy defines model for GroupBy.
 type GroupBy = string
+
+// InUseDays defines model for InUseDays.
+type InUseDays = int
 
 // Limit defines model for Limit.
 type Limit = int
@@ -829,6 +1107,39 @@ type GetAncestryParams struct {
 
 	// Platform Platform to pick when the ref names a multi-platform index, such as linux/arm64
 	Platform *Platform `form:"platform,omitempty" json:"platform,omitempty"`
+}
+
+// GetCleanupParams defines parameters for GetCleanup.
+type GetCleanupParams struct {
+	// Where Select candidates with the query language; empty means stale = "abandoned"
+	Where *string `form:"where,omitempty" json:"where,omitempty"`
+
+	// Scope Count a layer as freed when no kept image in the registry, or in the same repo, uses it
+	Scope *GetCleanupParamsScope `form:"scope,omitempty" json:"scope,omitempty"`
+
+	// Limit Most candidates to list, largest first; totals count them all. 0 lists all.
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Format json, or csv to export every candidate
+	Format *GetCleanupParamsFormat `form:"format,omitempty" json:"format,omitempty"`
+}
+
+// GetCleanupParamsScope defines parameters for GetCleanup.
+type GetCleanupParamsScope string
+
+// GetCleanupParamsFormat defines parameters for GetCleanup.
+type GetCleanupParamsFormat string
+
+// GetLifecyclesParams defines parameters for GetLifecycles.
+type GetLifecyclesParams struct {
+	// Repo Only repos matching these globs, with the host
+	Repo *[]string `form:"repo,omitempty" json:"repo,omitempty"`
+
+	// Days Expire untagged images pushed more than this many days ago; 0 uses the policy
+	Days *int `form:"days,omitempty" json:"days,omitempty"`
+
+	// IncludeConflicts Write a repo's rule even when it would expire images strata keeps
+	IncludeConflicts *bool `form:"include_conflicts,omitempty" json:"include_conflicts,omitempty"`
 }
 
 // GetDescendantsParams defines parameters for GetDescendants.
@@ -960,6 +1271,51 @@ type GetSummaryParams struct {
 	GroupBy *GroupBy `form:"group_by,omitempty" json:"group_by,omitempty"`
 }
 
+// GetVulnBasesParams defines parameters for GetVulnBases.
+type GetVulnBasesParams struct {
+	// Severity Rank by critical or high findings
+	Severity *GetVulnBasesParamsSeverity `form:"severity,omitempty" json:"severity,omitempty"`
+
+	// GroupBy Field to group by, such as repo, root or label.team
+	GroupBy *GroupBy `form:"group_by,omitempty" json:"group_by,omitempty"`
+
+	// InUseDays An image pulled within this many days counts as in use
+	InUseDays *InUseDays `form:"in_use_days,omitempty" json:"in_use_days,omitempty"`
+
+	// Limit Number of bases
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// GetVulnBasesParamsSeverity defines parameters for GetVulnBases.
+type GetVulnBasesParamsSeverity string
+
+// GetVulnImpactParams defines parameters for GetVulnImpact.
+type GetVulnImpactParams struct {
+	// Ref A base image ref
+	Ref *string `form:"ref,omitempty" json:"ref,omitempty"`
+
+	// Cve A vulnerability id, such as CVE-2024-3094
+	Cve *string `form:"cve,omitempty" json:"cve,omitempty"`
+
+	// Filter A filter in strata's query language; empty matches every image
+	Filter *Filter `form:"filter,omitempty" json:"filter,omitempty"`
+
+	// GroupBy Field to group by, such as repo, root or label.team
+	GroupBy *GroupBy `form:"group_by,omitempty" json:"group_by,omitempty"`
+
+	// InUseDays An image pulled within this many days counts as in use
+	InUseDays *InUseDays `form:"in_use_days,omitempty" json:"in_use_days,omitempty"`
+
+	// Limit Most images to list in JSON; totals count every image
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Format json, or csv to export every affected image
+	Format *GetVulnImpactParamsFormat `form:"format,omitempty" json:"format,omitempty"`
+}
+
+// GetVulnImpactParamsFormat defines parameters for GetVulnImpact.
+type GetVulnImpactParamsFormat string
+
 // RequestEditorFn is the function signature for the RequestEditor callback function
 type RequestEditorFn func(ctx context.Context, req *http.Request) error
 
@@ -1038,6 +1394,27 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /v1/ancestry (the `GetAncestry` operationId).
 	GetAncestry(ctx context.Context, params *GetAncestryParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetCleanup Images safe to delete and the storage deleting them frees
+	//
+	// Deletion candidates: images matching `where` (abandoned ones by
+	// default), whole multi-platform indexes only, leaving out any a kept
+	// image is built on. `reclaimable_bytes` counts each layer once and
+	// only when no kept image uses it. `format=csv` exports every
+	// candidate.
+	//
+	// Corresponds with GET /v1/cleanup (the `GetCleanup` operationId).
+	GetCleanup(ctx context.Context, params *GetCleanupParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetLifecycles ECR lifecycle policies that expire what strata calls abandoned
+	//
+	// One policy per repo expiring untagged images pushed more than the
+	// staleness policy's abandoned window ago, checked against the index.
+	// A repo where the rule would expire an image strata keeps gets no
+	// policy unless `include_conflicts` is set.
+	//
+	// Corresponds with GET /v1/cleanup/lifecycle (the `GetLifecycles` operationId).
+	GetLifecycles(ctx context.Context, params *GetLifecyclesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetDescendants Find everything built on a base
 	//
@@ -1126,6 +1503,25 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /v1/summary (the `GetSummary` operationId).
 	GetSummary(ctx context.Context, params *GetSummaryParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetVulnBases Rank the bases that carry the most vulnerabilities to the most images
+	//
+	// Base images whose registry scan found vulnerabilities and that other
+	// images are built on, ranked by findings times images in use, then
+	// times images.
+	//
+	// Corresponds with GET /v1/vulns/bases (the `GetVulnBases` operationId).
+	GetVulnBases(ctx context.Context, params *GetVulnBasesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetVulnImpact Everything a vulnerable base or a vulnerability reaches
+	//
+	// Name a base (`ref`) to list every image built on it, or a
+	// vulnerability id (`cve`) to list every image whose scan found it
+	// plus unscanned images built on one of them. Images are totalled per
+	// group (label.team by default). `format=csv` exports every image.
+	//
+	// Corresponds with GET /v1/vulns/impact (the `GetVulnImpact` operationId).
+	GetVulnImpact(ctx context.Context, params *GetVulnImpactParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
 // GetAncestry Walk an image's ancestry to its root base
@@ -1133,6 +1529,47 @@ type ClientInterface interface {
 // Corresponds with GET /v1/ancestry (the `GetAncestry` operationId).
 func (c *Client) GetAncestry(ctx context.Context, params *GetAncestryParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetAncestryRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetCleanup Images safe to delete and the storage deleting them frees
+//
+// Deletion candidates: images matching `where` (abandoned ones by
+// default), whole multi-platform indexes only, leaving out any a kept
+// image is built on. `reclaimable_bytes` counts each layer once and
+// only when no kept image uses it. `format=csv` exports every
+// candidate.
+//
+// Corresponds with GET /v1/cleanup (the `GetCleanup` operationId).
+func (c *Client) GetCleanup(ctx context.Context, params *GetCleanupParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetCleanupRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetLifecycles ECR lifecycle policies that expire what strata calls abandoned
+//
+// One policy per repo expiring untagged images pushed more than the
+// staleness policy's abandoned window ago, checked against the index.
+// A repo where the rule would expire an image strata keeps gets no
+// policy unless `include_conflicts` is set.
+//
+// Corresponds with GET /v1/cleanup/lifecycle (the `GetLifecycles` operationId).
+func (c *Client) GetLifecycles(ctx context.Context, params *GetLifecyclesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetLifecyclesRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -1371,6 +1808,45 @@ func (c *Client) GetSummary(ctx context.Context, params *GetSummaryParams, reqEd
 	return c.Client.Do(req)
 }
 
+// GetVulnBases Rank the bases that carry the most vulnerabilities to the most images
+//
+// Base images whose registry scan found vulnerabilities and that other
+// images are built on, ranked by findings times images in use, then
+// times images.
+//
+// Corresponds with GET /v1/vulns/bases (the `GetVulnBases` operationId).
+func (c *Client) GetVulnBases(ctx context.Context, params *GetVulnBasesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetVulnBasesRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetVulnImpact Everything a vulnerable base or a vulnerability reaches
+//
+// Name a base (`ref`) to list every image built on it, or a
+// vulnerability id (`cve`) to list every image whose scan found it
+// plus unscanned images built on one of them. Images are totalled per
+// group (label.team by default). `format=csv` exports every image.
+//
+// Corresponds with GET /v1/vulns/impact (the `GetVulnImpact` operationId).
+func (c *Client) GetVulnImpact(ctx context.Context, params *GetVulnImpactParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetVulnImpactRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // NewGetAncestryRequest constructs an http.Request for the GetAncestry method
 func NewGetAncestryRequest(server string, params *GetAncestryParams) (*http.Request, error) {
 	var err error
@@ -1410,6 +1886,174 @@ func NewGetAncestryRequest(server string, params *GetAncestryParams) (*http.Requ
 		if params.Platform != nil {
 
 			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "platform", *params.Platform, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetCleanupRequest constructs an http.Request for the GetCleanup method
+func NewGetCleanupRequest(server string, params *GetCleanupParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/cleanup")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Where != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "where", *params.Where, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Scope != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "scope", *params.Scope, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Format != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "format", *params.Format, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetLifecyclesRequest constructs an http.Request for the GetLifecycles method
+func NewGetLifecyclesRequest(server string, params *GetLifecyclesParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/cleanup/lifecycle")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Repo != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "repo", *params.Repo, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Days != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "days", *params.Days, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.IncludeConflicts != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "include_conflicts", *params.IncludeConflicts, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -2332,6 +2976,222 @@ func NewGetSummaryRequest(server string, params *GetSummaryParams) (*http.Reques
 	return req, nil
 }
 
+// NewGetVulnBasesRequest constructs an http.Request for the GetVulnBases method
+func NewGetVulnBasesRequest(server string, params *GetVulnBasesParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/vulns/bases")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Severity != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "severity", *params.Severity, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.GroupBy != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "group_by", *params.GroupBy, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.InUseDays != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "in_use_days", *params.InUseDays, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetVulnImpactRequest constructs an http.Request for the GetVulnImpact method
+func NewGetVulnImpactRequest(server string, params *GetVulnImpactParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/vulns/impact")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Ref != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "ref", *params.Ref, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cve != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cve", *params.Cve, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Filter != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "filter", *params.Filter, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.GroupBy != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "group_by", *params.GroupBy, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.InUseDays != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "in_use_days", *params.InUseDays, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Format != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "format", *params.Format, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 func (c *Client) applyEditors(ctx context.Context, req *http.Request, additionalEditors []RequestEditorFn) error {
 	for _, r := range c.RequestEditors {
 		if err := r(ctx, req); err != nil {
@@ -2382,6 +3242,31 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /v1/ancestry (the `GetAncestry` operationId).
 	GetAncestryWithResponse(ctx context.Context, params *GetAncestryParams, reqEditors ...RequestEditorFn) (*GetAncestryResponse, error)
+
+	// GetCleanupWithResponse Images safe to delete and the storage deleting them frees
+	//
+	// Deletion candidates: images matching `where` (abandoned ones by
+	// default), whole multi-platform indexes only, leaving out any a kept
+	// image is built on. `reclaimable_bytes` counts each layer once and
+	// only when no kept image uses it. `format=csv` exports every
+	// candidate.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/cleanup (the `GetCleanup` operationId).
+	GetCleanupWithResponse(ctx context.Context, params *GetCleanupParams, reqEditors ...RequestEditorFn) (*GetCleanupResponse, error)
+
+	// GetLifecyclesWithResponse ECR lifecycle policies that expire what strata calls abandoned
+	//
+	// One policy per repo expiring untagged images pushed more than the
+	// staleness policy's abandoned window ago, checked against the index.
+	// A repo where the rule would expire an image strata keeps gets no
+	// policy unless `include_conflicts` is set.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/cleanup/lifecycle (the `GetLifecycles` operationId).
+	GetLifecyclesWithResponse(ctx context.Context, params *GetLifecyclesParams, reqEditors ...RequestEditorFn) (*GetLifecyclesResponse, error)
 
 	// GetDescendantsWithResponse Find everything built on a base
 	//
@@ -2498,6 +3383,29 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /v1/summary (the `GetSummary` operationId).
 	GetSummaryWithResponse(ctx context.Context, params *GetSummaryParams, reqEditors ...RequestEditorFn) (*GetSummaryResponse, error)
+
+	// GetVulnBasesWithResponse Rank the bases that carry the most vulnerabilities to the most images
+	//
+	// Base images whose registry scan found vulnerabilities and that other
+	// images are built on, ranked by findings times images in use, then
+	// times images.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/vulns/bases (the `GetVulnBases` operationId).
+	GetVulnBasesWithResponse(ctx context.Context, params *GetVulnBasesParams, reqEditors ...RequestEditorFn) (*GetVulnBasesResponse, error)
+
+	// GetVulnImpactWithResponse Everything a vulnerable base or a vulnerability reaches
+	//
+	// Name a base (`ref`) to list every image built on it, or a
+	// vulnerability id (`cve`) to list every image whose scan found it
+	// plus unscanned images built on one of them. Images are totalled per
+	// group (label.team by default). `format=csv` exports every image.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/vulns/impact (the `GetVulnImpact` operationId).
+	GetVulnImpactWithResponse(ctx context.Context, params *GetVulnImpactParams, reqEditors ...RequestEditorFn) (*GetVulnImpactResponse, error)
 }
 
 type GetAncestryResponse struct {
@@ -2549,6 +3457,116 @@ func (r GetAncestryResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetAncestryResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetCleanupResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Cleanup
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetCleanupResponse) GetJSON200() *Cleanup {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetCleanupResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r GetCleanupResponse) GetJSONDefault() *Error {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetCleanupResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetCleanupResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetCleanupResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetCleanupResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetLifecyclesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *[]Lifecycle
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetLifecyclesResponse) GetJSON200() *[]Lifecycle {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetLifecyclesResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r GetLifecyclesResponse) GetJSONDefault() *Error {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetLifecyclesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetLifecyclesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetLifecyclesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetLifecyclesResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -3290,6 +4308,123 @@ func (r GetSummaryResponse) ContentType() string {
 	return ""
 }
 
+type GetVulnBasesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *[]VulnBase
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetVulnBasesResponse) GetJSON200() *[]VulnBase {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetVulnBasesResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r GetVulnBasesResponse) GetJSONDefault() *Error {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetVulnBasesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetVulnBasesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetVulnBasesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetVulnBasesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetVulnImpactResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Impact
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetVulnImpactResponse) GetJSON200() *Impact {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetVulnImpactResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetVulnImpactResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r GetVulnImpactResponse) GetJSONDefault() *Error {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetVulnImpactResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetVulnImpactResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetVulnImpactResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetVulnImpactResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // GetAncestryWithResponse Walk an image's ancestry to its root base
 //
 // Returns a wrapper object for the known response body format(s).
@@ -3301,6 +4436,43 @@ func (c *ClientWithResponses) GetAncestryWithResponse(ctx context.Context, param
 		return nil, err
 	}
 	return ParseGetAncestryResponse(rsp)
+}
+
+// GetCleanupWithResponse Images safe to delete and the storage deleting them frees
+//
+// Deletion candidates: images matching `where` (abandoned ones by
+// default), whole multi-platform indexes only, leaving out any a kept
+// image is built on. `reclaimable_bytes` counts each layer once and
+// only when no kept image uses it. `format=csv` exports every
+// candidate.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/cleanup (the `GetCleanup` operationId).
+func (c *ClientWithResponses) GetCleanupWithResponse(ctx context.Context, params *GetCleanupParams, reqEditors ...RequestEditorFn) (*GetCleanupResponse, error) {
+	rsp, err := c.GetCleanup(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetCleanupResponse(rsp)
+}
+
+// GetLifecyclesWithResponse ECR lifecycle policies that expire what strata calls abandoned
+//
+// One policy per repo expiring untagged images pushed more than the
+// staleness policy's abandoned window ago, checked against the index.
+// A repo where the rule would expire an image strata keeps gets no
+// policy unless `include_conflicts` is set.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/cleanup/lifecycle (the `GetLifecycles` operationId).
+func (c *ClientWithResponses) GetLifecyclesWithResponse(ctx context.Context, params *GetLifecyclesParams, reqEditors ...RequestEditorFn) (*GetLifecyclesResponse, error) {
+	rsp, err := c.GetLifecycles(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetLifecyclesResponse(rsp)
 }
 
 // GetDescendantsWithResponse Find everything built on a base
@@ -3503,6 +4675,41 @@ func (c *ClientWithResponses) GetSummaryWithResponse(ctx context.Context, params
 	return ParseGetSummaryResponse(rsp)
 }
 
+// GetVulnBasesWithResponse Rank the bases that carry the most vulnerabilities to the most images
+//
+// Base images whose registry scan found vulnerabilities and that other
+// images are built on, ranked by findings times images in use, then
+// times images.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/vulns/bases (the `GetVulnBases` operationId).
+func (c *ClientWithResponses) GetVulnBasesWithResponse(ctx context.Context, params *GetVulnBasesParams, reqEditors ...RequestEditorFn) (*GetVulnBasesResponse, error) {
+	rsp, err := c.GetVulnBases(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetVulnBasesResponse(rsp)
+}
+
+// GetVulnImpactWithResponse Everything a vulnerable base or a vulnerability reaches
+//
+// Name a base (`ref`) to list every image built on it, or a
+// vulnerability id (`cve`) to list every image whose scan found it
+// plus unscanned images built on one of them. Images are totalled per
+// group (label.team by default). `format=csv` exports every image.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/vulns/impact (the `GetVulnImpact` operationId).
+func (c *ClientWithResponses) GetVulnImpactWithResponse(ctx context.Context, params *GetVulnImpactParams, reqEditors ...RequestEditorFn) (*GetVulnImpactResponse, error) {
+	rsp, err := c.GetVulnImpact(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetVulnImpactResponse(rsp)
+}
+
 // ParseGetAncestryResponse parses an HTTP response from a GetAncestryWithResponse call
 func ParseGetAncestryResponse(rsp *http.Response) (*GetAncestryResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -3530,6 +4737,89 @@ func ParseGetAncestryResponse(rsp *http.Response) (*GetAncestryResponse, error) 
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetCleanupResponse parses an HTTP response from a GetCleanupWithResponse call
+func ParseGetCleanupResponse(rsp *http.Response) (*GetCleanupResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetCleanupResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Cleanup
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	case rsp.StatusCode == 200:
+		// Content-type (text/csv) unsupported
+
+	}
+
+	return response, nil
+}
+
+// ParseGetLifecyclesResponse parses an HTTP response from a GetLifecyclesWithResponse call
+func ParseGetLifecyclesResponse(rsp *http.Response) (*GetLifecyclesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetLifecyclesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []Lifecycle
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Error
@@ -4062,6 +5352,96 @@ func ParseGetSummaryResponse(rsp *http.Response) (*GetSummaryResponse, error) {
 			return nil, err
 		}
 		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetVulnBasesResponse parses an HTTP response from a GetVulnBasesWithResponse call
+func ParseGetVulnBasesResponse(rsp *http.Response) (*GetVulnBasesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetVulnBasesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []VulnBase
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetVulnImpactResponse parses an HTTP response from a GetVulnImpactWithResponse call
+func ParseGetVulnImpactResponse(rsp *http.Response) (*GetVulnImpactResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetVulnImpactResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Impact
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	case rsp.StatusCode == 200:
+		// Content-type (text/csv) unsupported
 
 	}
 

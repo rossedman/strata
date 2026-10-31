@@ -46,7 +46,7 @@ func TestTools(t *testing.T) {
 			t.Errorf("tool %s is not marked read-only", tool.Name)
 		}
 	}
-	if strings.Join(names, ",") != "ancestry,descendants,explain,query,roots,stale" {
+	if strings.Join(names, ",") != "ancestry,cleanup,descendants,explain,query,roots,stale,vuln_bases,vuln_impact" {
 		t.Fatalf("tools = %v", names)
 	}
 	calls := []struct {
@@ -61,6 +61,9 @@ func TestTools(t *testing.T) {
 		{"query", map[string]any{"filter": "", "group_by": "label.team", "limit": 1}, `"images"`},
 		{"stale", map[string]any{"group_by": "repo"}, `"stale_pct"`},
 		{"roots", map[string]any{}, `"descendants":3`},
+		{"vuln_bases", map[string]any{"severity": "high"}, `"bases":[]`},
+		{"vuln_impact", map[string]any{"ref": "base/debian:12", "limit": 1}, `"total":3`},
+		{"cleanup", map[string]any{"where": "tags = 0"}, `"reclaimable_bytes"`},
 	}
 	for _, c := range calls {
 		res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: c.name, Arguments: c.args})
@@ -82,6 +85,9 @@ func TestTools(t *testing.T) {
 		{"explain", map[string]any{"ref": "nope:1"}},
 		{"query", map[string]any{"filter": "nope = 1"}},
 		{"stale", map[string]any{"group_by": "tag"}},
+		{"vuln_bases", map[string]any{"severity": "spicy"}},
+		{"vuln_impact", map[string]any{}},
+		{"cleanup", map[string]any{"scope": "galaxy"}},
 	} {
 		res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: c.name, Arguments: c.args})
 		if err != nil {

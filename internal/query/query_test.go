@@ -98,6 +98,7 @@ func TestCompileErrors(t *testing.T) {
 		{`size = 1e400`, "not a number"},
 		{`size = 1e18TiB`, "out of range"},
 		{`a = `, "expected a value"},
+		{`vuln.id > "CVE-1"`, "does not apply"},
 	}
 	for _, tt := range tests {
 		_, err := Compile(tt.in)
@@ -132,6 +133,9 @@ func TestLookupAndExpr(t *testing.T) {
 	}
 	if _, err := Expr("nope"); err == nil {
 		t.Fatal("Expr accepted an unknown field")
+	}
+	if _, err := Expr("vuln.id"); err == nil || !strings.Contains(err.Error(), "not be selected") {
+		t.Fatalf("Expr(vuln.id) = %v", err)
 	}
 	if !IsList("tag") || IsList("repo") || IsList("nope") {
 		t.Fatal("IsList is wrong")
@@ -176,6 +180,14 @@ func registryDB(t *testing.T) (*store.Store, map[string]*model.Image) {
 			fixture.Tag(imgs["web"], "v3", 0),
 		},
 		Referrers: []model.Referrer{{Subject: imgs["worker"].Digest, Digest: fixture.Digest("s"), Kind: model.KindSBOM}},
+		Scans: []model.Scan{
+			{Digest: imgs["go"].Digest, Status: model.ScanComplete, CompletedAt: fixture.Epoch, Critical: 1, High: 2, HasFindings: true, FetchedAt: fixture.Epoch,
+				Findings: []model.Finding{{ID: "CVE-2024-3094", Package: "xz-utils", Severity: "critical", FixedIn: "5.6.1"}, {ID: "CVE-2023-1", Package: "zlib", Severity: "high"}}},
+			{Digest: imgs["api"].Digest, Status: model.ScanComplete, CompletedAt: fixture.Epoch, Critical: 1, Low: 3, HasFindings: true, FetchedAt: fixture.Epoch,
+				Findings: []model.Finding{{ID: "CVE-2024-3094", Package: "xz-utils", Severity: "critical"}}},
+			{Digest: imgs["worker"].Digest, Status: model.ScanComplete, CompletedAt: fixture.Epoch},
+			{Digest: imgs["web"].Digest, Status: "in_progress"},
+		},
 	}
 	for _, img := range imgs {
 		b.Images = append(b.Images, img)
@@ -238,6 +250,21 @@ func TestFiltersAgainstIndex(t *testing.T) {
 		{`stale ~ "aband*"`, "reg.io/base/go reg.io/web/old"},
 		{`stale.untagged != true and label.team = "web"`, "reg.io/web/site"},
 		{`label.team ~ "pay*" and layers in [3]`, "reg.io/payments/api reg.io/payments/worker"},
+		{`vuln.critical > 0`, "reg.io/base/go reg.io/payments/api"},
+		{`vuln.critical > 0 and stale.last_pulled < 30d`, ""},
+		{`vuln.total = 0`, "reg.io/payments/worker"},
+		{`vuln.scanned`, "reg.io/base/go reg.io/payments/api reg.io/payments/worker"},
+		{`not vuln.scanned and repo ~ "reg.io/web/*"`, "reg.io/web/old reg.io/web/site"},
+		{`vuln.high >= 2 or vuln.low = 3`, "reg.io/base/go reg.io/payments/api"},
+		{`vuln.fixable > 0`, "reg.io/base/go"},
+		{`vuln.scanned_at >= 2026-01-01 and vuln.scan_age >= 0d`, "reg.io/base/go reg.io/payments/api reg.io/payments/worker"},
+		{`vuln.id = "CVE-2024-3094"`, "reg.io/base/go reg.io/payments/api"},
+		{`vuln.id ~ "CVE-2023-*"`, "reg.io/base/go"},
+		{`vuln.id in ["CVE-2023-1", "CVE-9"]`, "reg.io/base/go"},
+		{`vuln.id != "CVE-2023-1" and vuln.scanned`, "reg.io/payments/api reg.io/payments/worker"},
+		{`vuln.package = "xz-utils" and label.team = "payments"`, "reg.io/payments/api"},
+		{`vuln.id`, "reg.io/base/go reg.io/payments/api"},
+		{`vuln.id exists and not vuln.id = "CVE-2023-1"`, "reg.io/payments/api"},
 		{``, "docker.io/library/debian reg.io/base/go reg.io/base/go reg.io/payments/api reg.io/payments/worker reg.io/web/old reg.io/web/site"},
 	}
 	for _, tt := range tests {

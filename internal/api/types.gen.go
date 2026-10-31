@@ -52,6 +52,24 @@ func (e BaseVersionSource) Valid() bool {
 	}
 }
 
+// Defines values for CleanupScope.
+const (
+	CleanupScopeRegistry CleanupScope = "registry"
+	CleanupScopeRepo     CleanupScope = "repo"
+)
+
+// Valid indicates whether the value is a known member of the CleanupScope enum.
+func (e CleanupScope) Valid() bool {
+	switch e {
+	case CleanupScopeRegistry:
+		return true
+	case CleanupScopeRepo:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for EdgeConfidence.
 const (
 	EdgeConfidenceDeclared EdgeConfidence = "declared"
@@ -130,6 +148,27 @@ const (
 func (e HealthStatus) Valid() bool {
 	switch e {
 	case Ok:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ImpactImageEvidence.
+const (
+	BuiltOn   ImpactImageEvidence = "built on"
+	Inherited ImpactImageEvidence = "inherited"
+	Scan      ImpactImageEvidence = "scan"
+)
+
+// Valid indicates whether the value is a known member of the ImpactImageEvidence enum.
+func (e ImpactImageEvidence) Valid() bool {
+	switch e {
+	case BuiltOn:
+		return true
+	case Inherited:
+		return true
+	case Scan:
 		return true
 	default:
 		return false
@@ -265,6 +304,42 @@ func (e Verdict) Valid() bool {
 	}
 }
 
+// Defines values for GetCleanupParamsScope.
+const (
+	GetCleanupParamsScopeRegistry GetCleanupParamsScope = "registry"
+	GetCleanupParamsScopeRepo     GetCleanupParamsScope = "repo"
+)
+
+// Valid indicates whether the value is a known member of the GetCleanupParamsScope enum.
+func (e GetCleanupParamsScope) Valid() bool {
+	switch e {
+	case GetCleanupParamsScopeRegistry:
+		return true
+	case GetCleanupParamsScopeRepo:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GetCleanupParamsFormat.
+const (
+	GetCleanupParamsFormatCsv  GetCleanupParamsFormat = "csv"
+	GetCleanupParamsFormatJson GetCleanupParamsFormat = "json"
+)
+
+// Valid indicates whether the value is a known member of the GetCleanupParamsFormat enum.
+func (e GetCleanupParamsFormat) Valid() bool {
+	switch e {
+	case GetCleanupParamsFormatCsv:
+		return true
+	case GetCleanupParamsFormatJson:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for SearchParamsAge.
 const (
 	SearchParamsAgeGreaterThan1Year SearchParamsAge = "> 1 year"
@@ -319,6 +394,42 @@ func (e SearchParamsPushed) Valid() bool {
 	}
 }
 
+// Defines values for GetVulnBasesParamsSeverity.
+const (
+	Critical GetVulnBasesParamsSeverity = "critical"
+	High     GetVulnBasesParamsSeverity = "high"
+)
+
+// Valid indicates whether the value is a known member of the GetVulnBasesParamsSeverity enum.
+func (e GetVulnBasesParamsSeverity) Valid() bool {
+	switch e {
+	case Critical:
+		return true
+	case High:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GetVulnImpactParamsFormat.
+const (
+	GetVulnImpactParamsFormatCsv  GetVulnImpactParamsFormat = "csv"
+	GetVulnImpactParamsFormatJson GetVulnImpactParamsFormat = "json"
+)
+
+// Valid indicates whether the value is a known member of the GetVulnImpactParamsFormat enum.
+func (e GetVulnImpactParamsFormat) Valid() bool {
+	switch e {
+	case GetVulnImpactParamsFormatCsv:
+		return true
+	case GetVulnImpactParamsFormatJson:
+		return true
+	default:
+		return false
+	}
+}
+
 // BaseVersion One digest a base tag has held, and how much is built on it
 type BaseVersion struct {
 	Children    int                   `json:"children"`
@@ -345,6 +456,55 @@ type Change struct {
 	To     float32 `json:"to"`
 }
 
+// Cleanup Deletion candidates and what deleting them frees
+type Cleanup struct {
+	Candidates []CleanupCandidate `json:"candidates"`
+
+	// Held Matching images kept because kept images are built on them or share their index
+	Held int `json:"held"`
+
+	// Images Platform images in the candidates
+	Images int `json:"images"`
+
+	// ReclaimableBytes Layers freed, each once, none a kept image uses
+	ReclaimableBytes int64         `json:"reclaimable_bytes"`
+	Repos            []CleanupRepo `json:"repos"`
+	Scope            CleanupScope  `json:"scope"`
+
+	// Size Sizes the manifests state, a shared layer counted per image
+	Size int64 `json:"size"`
+
+	// Total Candidates: manifests or whole indexes
+	Total int    `json:"total"`
+	Where string `json:"where"`
+}
+
+// CleanupScope defines model for Cleanup.Scope.
+type CleanupScope string
+
+// CleanupCandidate A manifest or index that can be deleted
+type CleanupCandidate struct {
+	Digest string `json:"digest"`
+
+	// ExclusiveBytes Freed by deleting this candidate alone
+	ExclusiveBytes int64  `json:"exclusive_bytes"`
+	Images         int    `json:"images"`
+	LastPulledDays *int   `json:"last_pulled_days"`
+	PushedDays     *int   `json:"pushed_days"`
+	Reason         string `json:"reason"`
+	Repo           string `json:"repo"`
+	Size           int64  `json:"size"`
+	Verdict        string `json:"verdict"`
+}
+
+// CleanupRepo Candidates of one repo
+type CleanupRepo struct {
+	Candidates       int    `json:"candidates"`
+	ReclaimableBytes int64  `json:"reclaimable_bytes"`
+	Repo             string `json:"repo"`
+	Size             int64  `json:"size"`
+}
+
 // ConfigInfo Run-time fields from the image config; environment values are never stored except allowlisted ones
 type ConfigInfo struct {
 	Cmd         []string           `json:"cmd"`
@@ -360,6 +520,8 @@ type ConfigInfo struct {
 
 // CrawlStats Running totals of a crawl
 type CrawlStats struct {
+	// Findings Scans whose findings were fetched
+	Findings       int64 `json:"findings"`
 	ImagesFiltered int64 `json:"images_filtered"`
 	NewImages      int64 `json:"new_images"`
 	Referrers      int64 `json:"referrers"`
@@ -372,8 +534,11 @@ type CrawlStats struct {
 	ReposResumed int64 `json:"repos_resumed"`
 
 	// ReposTotal Repos this crawl visits, once listed
-	ReposTotal   int64 `json:"repos_total"`
-	Requests     int64 `json:"requests"`
+	ReposTotal int64 `json:"repos_total"`
+	Requests   int64 `json:"requests"`
+
+	// Scans Vulnerability scans the registry listed
+	Scans        int64 `json:"scans"`
 	TagMoves     int64 `json:"tag_moves"`
 	Tags         int64 `json:"tags"`
 	TagsFiltered int64 `json:"tags_filtered"`
@@ -513,6 +678,54 @@ type ImageInfo struct {
 	TopChainId string     `json:"top_chain_id"`
 }
 
+// Impact The blast radius of a base or a vulnerability
+type Impact struct {
+	GroupBy string         `json:"group_by"`
+	Groups  []ImpactGroup  `json:"groups"`
+	Images  []ImpactImage  `json:"images"`
+	InUse   int            `json:"in_use"`
+	Origins []ImpactOrigin `json:"origins"`
+	Target  string         `json:"target"`
+
+	// Total Affected images, before the limit
+	Total int `json:"total"`
+}
+
+// ImpactGroup Affected images with one group-by value
+type ImpactGroup struct {
+	Images int    `json:"images"`
+	InUse  int    `json:"in_use"`
+	Repos  int    `json:"repos"`
+	Value  string `json:"value"`
+}
+
+// ImpactImage One affected image
+type ImpactImage struct {
+	Critical       *int                `json:"critical"`
+	Digest         string              `json:"digest"`
+	Evidence       ImpactImageEvidence `json:"evidence"`
+	Group          string              `json:"group"`
+	High           *int                `json:"high"`
+	InUse          bool                `json:"in_use"`
+	LastPulledDays *int                `json:"last_pulled_days"`
+	Ref            string              `json:"ref"`
+	Repo           string              `json:"repo"`
+	Stale          string              `json:"stale"`
+
+	// Via The origin it is affected through
+	Via string `json:"via"`
+}
+
+// ImpactImageEvidence defines model for ImpactImage.Evidence.
+type ImpactImageEvidence string
+
+// ImpactOrigin An image a vulnerability enters through
+type ImpactOrigin struct {
+	Digest string `json:"digest"`
+	Images int    `json:"images"`
+	Ref    string `json:"ref"`
+}
+
 // IndexStatus State of the running or last index
 type IndexStatus struct {
 	// Crawl Running totals of a crawl
@@ -546,6 +759,44 @@ type LayerInfo struct {
 	Position   int    `json:"position"`
 	SharedBy   int    `json:"shared_by"`
 	Size       int64  `json:"size"`
+}
+
+// Lifecycle A generated ECR lifecycle policy for one repo, checked against the index
+type Lifecycle struct {
+	// Agree Of those, images strata lists for cleanup
+	Agree     int `json:"agree"`
+	Conflicts []struct {
+		Digest string `json:"digest"`
+		Reason string `json:"reason"`
+	} `json:"conflicts"`
+	Days int `json:"days"`
+
+	// Expires Images the rule would expire today
+	Expires int `json:"expires"`
+
+	// Name The repository name ECR uses, without the host
+	Name string `json:"name"`
+
+	// Policy The lifecycle policy document, or null when the repo is skipped
+	Policy *struct {
+		Rules []struct {
+			Action struct {
+				Type string `json:"type"`
+			} `json:"action"`
+			Description  string `json:"description"`
+			RulePriority int    `json:"rulePriority"`
+			Selection    struct {
+				CountNumber int     `json:"countNumber"`
+				CountType   string  `json:"countType"`
+				CountUnit   *string `json:"countUnit,omitempty"`
+				TagStatus   string  `json:"tagStatus"`
+			} `json:"selection"`
+		} `json:"rules"`
+	} `json:"policy"`
+	Repo string `json:"repo"`
+
+	// Skipped Why the repo has no policy
+	Skipped *string `json:"skipped,omitempty"`
 }
 
 // LineageInfo Where an image sits in the lineage graph, with the evidence for its parent
@@ -786,6 +1037,30 @@ type VerdictCounts struct {
 	Stale     int64 `json:"stale"`
 }
 
+// VulnBase A base whose scan found vulnerabilities, and what is built on it
+type VulnBase struct {
+	Critical int    `json:"critical"`
+	Digest   string `json:"digest"`
+
+	// Fixable Vulnerabilities with a fixed version; set when findings were fetched
+	Fixable *int `json:"fixable,omitempty"`
+
+	// Groups Distinct group-by values (teams) among them
+	Groups int `json:"groups"`
+	High   int `json:"high"`
+
+	// Images Images built on the base, at any depth
+	Images int `json:"images"`
+
+	// InUse Of those, images pulled within the in-use window
+	InUse int    `json:"in_use"`
+	Ref   string `json:"ref"`
+	Repo  string `json:"repo"`
+
+	// Vulnerable Of those, images whose own scan has findings of the severity
+	Vulnerable int `json:"vulnerable"`
+}
+
 // Budget defines model for Budget.
 type Budget = int
 
@@ -794,6 +1069,9 @@ type Filter = string
 
 // GroupBy defines model for GroupBy.
 type GroupBy = string
+
+// InUseDays defines model for InUseDays.
+type InUseDays = int
 
 // Limit defines model for Limit.
 type Limit = int
@@ -820,6 +1098,39 @@ type GetAncestryParams struct {
 
 	// Platform Platform to pick when the ref names a multi-platform index, such as linux/arm64
 	Platform *Platform `form:"platform,omitempty" json:"platform,omitempty"`
+}
+
+// GetCleanupParams defines parameters for GetCleanup.
+type GetCleanupParams struct {
+	// Where Select candidates with the query language; empty means stale = "abandoned"
+	Where *string `form:"where,omitempty" json:"where,omitempty"`
+
+	// Scope Count a layer as freed when no kept image in the registry, or in the same repo, uses it
+	Scope *GetCleanupParamsScope `form:"scope,omitempty" json:"scope,omitempty"`
+
+	// Limit Most candidates to list, largest first; totals count them all. 0 lists all.
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Format json, or csv to export every candidate
+	Format *GetCleanupParamsFormat `form:"format,omitempty" json:"format,omitempty"`
+}
+
+// GetCleanupParamsScope defines parameters for GetCleanup.
+type GetCleanupParamsScope string
+
+// GetCleanupParamsFormat defines parameters for GetCleanup.
+type GetCleanupParamsFormat string
+
+// GetLifecyclesParams defines parameters for GetLifecycles.
+type GetLifecyclesParams struct {
+	// Repo Only repos matching these globs, with the host
+	Repo *[]string `form:"repo,omitempty" json:"repo,omitempty"`
+
+	// Days Expire untagged images pushed more than this many days ago; 0 uses the policy
+	Days *int `form:"days,omitempty" json:"days,omitempty"`
+
+	// IncludeConflicts Write a repo's rule even when it would expire images strata keeps
+	IncludeConflicts *bool `form:"include_conflicts,omitempty" json:"include_conflicts,omitempty"`
 }
 
 // GetDescendantsParams defines parameters for GetDescendants.
@@ -950,3 +1261,48 @@ type GetSummaryParams struct {
 	// GroupBy Field to group by, such as repo, root or label.team
 	GroupBy *GroupBy `form:"group_by,omitempty" json:"group_by,omitempty"`
 }
+
+// GetVulnBasesParams defines parameters for GetVulnBases.
+type GetVulnBasesParams struct {
+	// Severity Rank by critical or high findings
+	Severity *GetVulnBasesParamsSeverity `form:"severity,omitempty" json:"severity,omitempty"`
+
+	// GroupBy Field to group by, such as repo, root or label.team
+	GroupBy *GroupBy `form:"group_by,omitempty" json:"group_by,omitempty"`
+
+	// InUseDays An image pulled within this many days counts as in use
+	InUseDays *InUseDays `form:"in_use_days,omitempty" json:"in_use_days,omitempty"`
+
+	// Limit Number of bases
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// GetVulnBasesParamsSeverity defines parameters for GetVulnBases.
+type GetVulnBasesParamsSeverity string
+
+// GetVulnImpactParams defines parameters for GetVulnImpact.
+type GetVulnImpactParams struct {
+	// Ref A base image ref
+	Ref *string `form:"ref,omitempty" json:"ref,omitempty"`
+
+	// Cve A vulnerability id, such as CVE-2024-3094
+	Cve *string `form:"cve,omitempty" json:"cve,omitempty"`
+
+	// Filter A filter in strata's query language; empty matches every image
+	Filter *Filter `form:"filter,omitempty" json:"filter,omitempty"`
+
+	// GroupBy Field to group by, such as repo, root or label.team
+	GroupBy *GroupBy `form:"group_by,omitempty" json:"group_by,omitempty"`
+
+	// InUseDays An image pulled within this many days counts as in use
+	InUseDays *InUseDays `form:"in_use_days,omitempty" json:"in_use_days,omitempty"`
+
+	// Limit Most images to list in JSON; totals count every image
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Format json, or csv to export every affected image
+	Format *GetVulnImpactParamsFormat `form:"format,omitempty" json:"format,omitempty"`
+}
+
+// GetVulnImpactParamsFormat defines parameters for GetVulnImpact.
+type GetVulnImpactParamsFormat string

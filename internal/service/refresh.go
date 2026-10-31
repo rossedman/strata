@@ -36,16 +36,18 @@ type RefreshStats struct {
 const factsLiveView = `CREATE OR REPLACE VIEW image_facts_live AS
 	SELECT * REPLACE (
 		CASE WHEN created IS NULL OR year(created) < 1980 THEN NULL ELSE date_diff('day', created, now()) END AS age_days,
-		date_diff('day', pushed, now()) AS pushed_age_days)
+		date_diff('day', pushed, now()) AS pushed_age_days,
+		date_diff('day', vuln_scanned_at, now()) AS vuln_scan_age_days)
 	FROM image_facts`
 
-// Shadow tables hold what tags, referrers and push times looked like at
+// Shadow tables hold what tags, referrers, push times and scans looked like at
 // the last refresh. Comparing against them finds the images whose cached
-// refs, referrer flags or push times are out of date.
+// refs, referrer flags, push times or scan counts are out of date.
 var shadows = map[string]string{
 	"refresh_tags":      "SELECT repo, tag, digest FROM tags",
 	"refresh_referrers": "SELECT subject, digest, kind FROM referrers",
 	"refresh_pushes":    "SELECT repo, digest, pushed_at FROM pushes",
+	"refresh_scans":     "SELECT digest, status, completed_at, critical, high, medium, low, other, findings, fixable FROM scans",
 }
 
 // refresh does the work of Refresh; the caller holds refreshMu.
@@ -58,7 +60,7 @@ var shadows = map[string]string{
 //     changed verdicts are written.
 //   - Subtree stats are recomputed only when lineage or a verdict changed.
 //   - image_facts is rebuilt only for images whose own row, lineage,
-//     verdict, tags, referrers or push times changed, or whose parent's or
+//     verdict, tags, referrers, push times or scans changed, or whose parent's or
 //     root's tags did.
 //   - Today's snapshot is skipped when no image row changed, and
 //     otherwise writes only the metrics that moved.
@@ -166,7 +168,7 @@ func (s *Service) needsFull(ctx context.Context) (bool, error) {
 		return true, nil
 	}
 	var n int
-	if err := s.db().QueryRowContext(ctx, `SELECT count(*) FROM information_schema.tables WHERE table_name IN ('refresh_tags', 'refresh_referrers', 'refresh_pushes')`).Scan(&n); err != nil {
+	if err := s.db().QueryRowContext(ctx, `SELECT count(*) FROM information_schema.tables WHERE table_name IN ('refresh_tags', 'refresh_referrers', 'refresh_pushes', 'refresh_scans')`).Scan(&n); err != nil {
 		return false, err
 	}
 	return n < len(shadows), nil
@@ -224,7 +226,9 @@ func (s *Service) updateFacts(ctx context.Context, changed []string) (int, error
 			UNION SELECT subject FROM (SELECT subject, digest, kind FROM referrers EXCEPT SELECT * FROM refresh_referrers)
 			UNION SELECT subject FROM (SELECT * FROM refresh_referrers EXCEPT SELECT subject, digest, kind FROM referrers)
 			UNION SELECT digest FROM (SELECT repo, digest, pushed_at FROM pushes EXCEPT SELECT * FROM refresh_pushes)
-			UNION SELECT digest FROM (SELECT * FROM refresh_pushes EXCEPT SELECT repo, digest, pushed_at FROM pushes)`,
+			UNION SELECT digest FROM (SELECT * FROM refresh_pushes EXCEPT SELECT repo, digest, pushed_at FROM pushes)
+			UNION SELECT digest FROM (` + shadows["refresh_scans"] + ` EXCEPT SELECT * FROM refresh_scans)
+			UNION SELECT digest FROM (SELECT * FROM refresh_scans EXCEPT ` + shadows["refresh_scans"] + `)`,
 		`CREATE OR REPLACE TEMP TABLE touched_images AS
 			SELECT d FROM touched UNION SELECT m.digest FROM index_manifests m JOIN touched t ON t.d = m.index_digest`,
 		`CREATE OR REPLACE TEMP TABLE facts_dirty AS

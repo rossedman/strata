@@ -112,6 +112,19 @@ func TestEvaluate(t *testing.T) {
 			reason:  "untagged, no descendants and no pulls in 90 days",
 		},
 		{
+			name:    "untagged leaf the registry never saw pulled, pushed long ago",
+			ev:      &Evaluator{Policy: DefaultPolicy(), History: History{}, Now: now, HavePulls: true},
+			facts:   Facts{Digest: self, Pushed: now.AddDate(0, 0, -120)},
+			verdict: Abandoned,
+			reason:  "never pulled since its push 120 days ago",
+		},
+		{
+			name:    "untagged leaf the registry never saw pulled, pushed recently",
+			ev:      &Evaluator{Policy: DefaultPolicy(), History: History{}, Now: now, HavePulls: true},
+			facts:   Facts{Digest: self, Pushed: now.AddDate(0, 0, -10)},
+			verdict: Fresh,
+		},
+		{
 			name:    "phantom parent says nothing about drift",
 			ev:      evaluator(),
 			facts:   Facts{Digest: self, Tags: 1, Parent: &ParentFacts{Digest: "phantom:x", Phantom: true}},

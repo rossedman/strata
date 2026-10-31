@@ -430,6 +430,211 @@ paths:
                   $ref: "#/components/schemas/OutlineRow"
         default:
           $ref: "#/components/responses/Error"
+  /v1/vulns/bases:
+    get:
+      operationId: getVulnBases
+      summary: Rank the bases that carry the most vulnerabilities to the most images
+      description: |
+        Base images whose registry scan found vulnerabilities and that other
+        images are built on, ranked by findings times images in use, then
+        times images.
+      tags: [reports]
+      parameters:
+        - name: severity
+          in: query
+          required: false
+          description: Rank by critical or high findings
+          schema:
+            type: string
+            enum: [critical, high]
+            default: critical
+        - $ref: "#/components/parameters/GroupBy"
+        - $ref: "#/components/parameters/InUseDays"
+        - name: limit
+          in: query
+          required: false
+          description: Number of bases
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 20
+      responses:
+        "200":
+          description: Vulnerable bases, most impact first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/VulnBase"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        default:
+          $ref: "#/components/responses/Error"
+  /v1/vulns/impact:
+    get:
+      operationId: getVulnImpact
+      summary: Everything a vulnerable base or a vulnerability reaches
+      description: |
+        Name a base (`ref`) to list every image built on it, or a
+        vulnerability id (`cve`) to list every image whose scan found it
+        plus unscanned images built on one of them. Images are totalled per
+        group (label.team by default). `format=csv` exports every image.
+      tags: [reports]
+      parameters:
+        - name: ref
+          in: query
+          required: false
+          description: A base image ref
+          schema:
+            type: string
+        - name: cve
+          in: query
+          required: false
+          description: A vulnerability id, such as CVE-2024-3094
+          schema:
+            type: string
+        - $ref: "#/components/parameters/Filter"
+        - $ref: "#/components/parameters/GroupBy"
+        - $ref: "#/components/parameters/InUseDays"
+        - name: limit
+          in: query
+          required: false
+          description: Most images to list in JSON; totals count every image
+          schema:
+            type: integer
+            minimum: 0
+            default: 1000
+        - name: format
+          in: query
+          required: false
+          description: json, or csv to export every affected image
+          schema:
+            type: string
+            enum: [json, csv]
+            default: json
+      responses:
+        "200":
+          description: The blast radius
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Impact"
+            text/csv:
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+  /v1/cleanup:
+    get:
+      operationId: getCleanup
+      summary: Images safe to delete and the storage deleting them frees
+      description: |
+        Deletion candidates: images matching `where` (abandoned ones by
+        default), whole multi-platform indexes only, leaving out any a kept
+        image is built on. `reclaimable_bytes` counts each layer once and
+        only when no kept image uses it. `format=csv` exports every
+        candidate.
+      tags: [reports]
+      parameters:
+        - name: where
+          in: query
+          required: false
+          description: Select candidates with the query language; empty means stale = "abandoned"
+          schema:
+            type: string
+        - name: scope
+          in: query
+          required: false
+          description: Count a layer as freed when no kept image in the registry, or in the same repo, uses it
+          schema:
+            type: string
+            enum: [registry, repo]
+            default: registry
+        - name: limit
+          in: query
+          required: false
+          description: Most candidates to list, largest first; totals count them all. 0 lists all.
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: format
+          in: query
+          required: false
+          description: json, or csv to export every candidate
+          schema:
+            type: string
+            enum: [json, csv]
+            default: json
+      responses:
+        "200":
+          description: The deletion candidates
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Cleanup"
+            text/csv:
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        default:
+          $ref: "#/components/responses/Error"
+  /v1/cleanup/lifecycle:
+    get:
+      operationId: getLifecycles
+      summary: ECR lifecycle policies that expire what strata calls abandoned
+      description: |
+        One policy per repo expiring untagged images pushed more than the
+        staleness policy's abandoned window ago, checked against the index.
+        A repo where the rule would expire an image strata keeps gets no
+        policy unless `include_conflicts` is set.
+      tags: [reports]
+      parameters:
+        - name: repo
+          in: query
+          required: false
+          description: Only repos matching these globs, with the host
+          style: form
+          explode: true
+          schema:
+            type: array
+            items:
+              type: string
+        - name: days
+          in: query
+          required: false
+          description: Expire untagged images pushed more than this many days ago; 0 uses the policy
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: include_conflicts
+          in: query
+          required: false
+          description: Write a repo's rule even when it would expire images strata keeps
+          schema:
+            type: boolean
+            default: false
+      responses:
+        "200":
+          description: A policy, or why there is none, per repo
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Lifecycle"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        default:
+          $ref: "#/components/responses/Error"
 components:
   parameters:
     Ref:
@@ -462,6 +667,15 @@ components:
       description: Field to group by, such as repo, root or label.team
       schema:
         type: string
+    InUseDays:
+      name: in_use_days
+      in: query
+      required: false
+      description: An image pulled within this many days counts as in use
+      schema:
+        type: integer
+        minimum: 1
+        default: 30
     Budget:
       name: budget
       in: query
@@ -1128,7 +1342,7 @@ components:
     CrawlStats:
       description: "Running totals of a crawl"
       type: object
-      required: [repos_total, repos, repos_resumed, tags, new_images, tag_moves, requests, referrers, repos_filtered, tags_filtered, images_filtered]
+      required: [repos_total, repos, repos_resumed, tags, new_images, tag_moves, requests, referrers, scans, findings, repos_filtered, tags_filtered, images_filtered]
       properties:
         repos_total: { type: integer, format: int64, description: "Repos this crawl visits, once listed" }
         repos: { type: integer, format: int64, description: "Repos crawled so far" }
@@ -1138,9 +1352,171 @@ components:
         tag_moves: { type: integer, format: int64 }
         requests: { type: integer, format: int64 }
         referrers: { type: integer, format: int64 }
+        scans: { type: integer, format: int64, description: "Vulnerability scans the registry listed" }
+        findings: { type: integer, format: int64, description: "Scans whose findings were fetched" }
         repos_filtered: { type: integer, format: int64 }
         tags_filtered: { type: integer, format: int64 }
         images_filtered: { type: integer, format: int64 }
+    VulnBase:
+      description: "A base whose scan found vulnerabilities, and what is built on it"
+      type: object
+      required: [digest, ref, repo, critical, high, images, in_use, vulnerable, groups]
+      properties:
+        digest: { type: string }
+        ref: { type: string }
+        repo: { type: string }
+        critical: { type: integer }
+        high: { type: integer }
+        fixable: { type: integer, description: "Vulnerabilities with a fixed version; set when findings were fetched" }
+        images: { type: integer, description: "Images built on the base, at any depth" }
+        in_use: { type: integer, description: "Of those, images pulled within the in-use window" }
+        vulnerable: { type: integer, description: "Of those, images whose own scan has findings of the severity" }
+        groups: { type: integer, description: "Distinct group-by values (teams) among them" }
+    Impact:
+      description: "The blast radius of a base or a vulnerability"
+      type: object
+      required: [target, origins, group_by, groups, images, total, in_use]
+      properties:
+        target: { type: string }
+        origins:
+          type: array
+          items:
+            $ref: "#/components/schemas/ImpactOrigin"
+        group_by: { type: string }
+        groups:
+          type: array
+          items:
+            $ref: "#/components/schemas/ImpactGroup"
+        images:
+          type: array
+          items:
+            $ref: "#/components/schemas/ImpactImage"
+        total: { type: integer, description: "Affected images, before the limit" }
+        in_use: { type: integer }
+    ImpactOrigin:
+      description: "An image a vulnerability enters through"
+      type: object
+      required: [digest, ref, images]
+      properties:
+        digest: { type: string }
+        ref: { type: string }
+        images: { type: integer }
+    ImpactGroup:
+      description: "Affected images with one group-by value"
+      type: object
+      required: [value, images, in_use, repos]
+      properties:
+        value: { type: string }
+        images: { type: integer }
+        in_use: { type: integer }
+        repos: { type: integer }
+    ImpactImage:
+      description: "One affected image"
+      type: object
+      required: [digest, ref, repo, group, critical, high, stale, last_pulled_days, in_use, via, evidence]
+      properties:
+        digest: { type: string }
+        ref: { type: string }
+        repo: { type: string }
+        group: { type: string }
+        critical: { type: integer, nullable: true }
+        high: { type: integer, nullable: true }
+        stale: { type: string }
+        last_pulled_days: { type: integer, nullable: true }
+        in_use: { type: boolean }
+        via: { type: string, description: "The origin it is affected through" }
+        evidence:
+          type: string
+          enum: [scan, built on, inherited]
+    Cleanup:
+      description: "Deletion candidates and what deleting them frees"
+      type: object
+      required: [where, scope, candidates, repos, total, images, size, reclaimable_bytes, held]
+      properties:
+        where: { type: string }
+        scope: { type: string, enum: [registry, repo] }
+        candidates:
+          type: array
+          items:
+            $ref: "#/components/schemas/CleanupCandidate"
+        repos:
+          type: array
+          items:
+            $ref: "#/components/schemas/CleanupRepo"
+        total: { type: integer, description: "Candidates: manifests or whole indexes" }
+        images: { type: integer, description: "Platform images in the candidates" }
+        size: { type: integer, format: int64, description: "Sizes the manifests state, a shared layer counted per image" }
+        reclaimable_bytes: { type: integer, format: int64, description: "Layers freed, each once, none a kept image uses" }
+        held: { type: integer, description: "Matching images kept because kept images are built on them or share their index" }
+    CleanupCandidate:
+      description: "A manifest or index that can be deleted"
+      type: object
+      required: [digest, repo, images, size, exclusive_bytes, verdict, reason, pushed_days, last_pulled_days]
+      properties:
+        digest: { type: string }
+        repo: { type: string }
+        images: { type: integer }
+        size: { type: integer, format: int64 }
+        exclusive_bytes: { type: integer, format: int64, description: "Freed by deleting this candidate alone" }
+        verdict: { type: string }
+        reason: { type: string }
+        pushed_days: { type: integer, nullable: true }
+        last_pulled_days: { type: integer, nullable: true }
+    CleanupRepo:
+      description: "Candidates of one repo"
+      type: object
+      required: [repo, candidates, size, reclaimable_bytes]
+      properties:
+        repo: { type: string }
+        candidates: { type: integer }
+        size: { type: integer, format: int64 }
+        reclaimable_bytes: { type: integer, format: int64 }
+    Lifecycle:
+      description: "A generated ECR lifecycle policy for one repo, checked against the index"
+      type: object
+      required: [repo, name, days, expires, agree, conflicts, policy]
+      properties:
+        repo: { type: string }
+        name: { type: string, description: "The repository name ECR uses, without the host" }
+        days: { type: integer }
+        expires: { type: integer, description: "Images the rule would expire today" }
+        agree: { type: integer, description: "Of those, images strata lists for cleanup" }
+        conflicts:
+          type: array
+          items:
+            type: object
+            required: [digest, reason]
+            properties:
+              digest: { type: string }
+              reason: { type: string }
+        policy:
+          nullable: true
+          description: "The lifecycle policy document, or null when the repo is skipped"
+          type: object
+          required: [rules]
+          properties:
+            rules:
+              type: array
+              items:
+                type: object
+                required: [rulePriority, description, selection, action]
+                properties:
+                  rulePriority: { type: integer }
+                  description: { type: string }
+                  selection:
+                    type: object
+                    required: [tagStatus, countType, countNumber]
+                    properties:
+                      tagStatus: { type: string }
+                      countType: { type: string }
+                      countUnit: { type: string }
+                      countNumber: { type: integer }
+                  action:
+                    type: object
+                    required: [type]
+                    properties:
+                      type: { type: string }
+        skipped: { type: string, description: "Why the repo has no policy" }
     RefreshStats:
       description: "What the last refresh rewrote; refreshes are incremental"
       type: object

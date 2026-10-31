@@ -72,6 +72,12 @@ List fields (`tag`, `ref`, `config.ports` and the like) match when any element m
 | `config.env_keys` | environment variable names (values are never stored) |
 | `config.workdir`, `config.stop_signal` | working directory and stop signal |
 | `config.healthcheck` | a healthcheck is defined |
+| `vuln.scanned` | the registry has a finished vulnerability scan of the image (ECR) |
+| `vuln.scanned_at`, `vuln.scan_age` | when the last scan completed, and days since |
+| `vuln.critical`, `vuln.high`, `vuln.medium`, `vuln.low`, `vuln.total` | findings by severity; not set when the image wasn't scanned |
+| `vuln.fixable` | vulnerabilities with a fixed version (needs `scan-findings`) |
+| `vuln.id` | a vulnerability the scan found, such as `CVE-2024-3094` (needs `scan-findings`); filters only, it can't be a column |
+| `vuln.package` | a package with a vulnerability, such as `openssl` (needs `scan-findings`); filters only |
 
 `created` and `age` come from the image config, which reproducible builds (ko, Bazel, Nix, buildpacks) often set to 1970 or another fixed date; `age` is unknown for those. On ECR, `pushed` and `pushed_age` give the real push time, and `first_seen` works on every registry.
 
@@ -105,6 +111,12 @@ strata query 'stale.eol_base and not has:sbom' --fields repo,tag,root
 
 # Repos missing a required label
 strata query 'missing:team' --group-by repo
+
+# Images in use with critical vulnerabilities, by team
+strata query 'vuln.critical > 0 and stale.last_pulled < 30d' --group-by label.team
+
+# Everything still carrying a CVE, with its team
+strata query 'vuln.id = "CVE-2024-3094"' --fields repo,tag,label.team,vuln.critical
 
 # Export everything for analysis elsewhere
 strata query '' -o ndjson > images.ndjson

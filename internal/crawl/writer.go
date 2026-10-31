@@ -75,11 +75,12 @@ func (w *writer) add(ctx context.Context, b *store.Batch, repo string) error {
 	p.DeleteTags = append(p.DeleteTags, b.DeleteTags...)
 	p.Events = append(p.Events, b.Events...)
 	p.Pushes = append(p.Pushes, b.Pushes...)
+	p.Scans = append(p.Scans, b.Scans...)
 	if repo != "" {
 		p.Done = append(p.Done, repo)
 	}
-	// Tags and pushes are small rows, so they get a larger allowance.
-	if len(p.Images) < w.size && len(p.Tags)+len(p.Pushes)+len(p.Events) < 20*w.size && time.Since(w.last) < w.every {
+	// Tags, pushes and scans are small rows, so they get a larger allowance.
+	if len(p.Images) < w.size && len(p.Tags)+len(p.Pushes)+len(p.Events)+len(p.Scans) < 20*w.size && time.Since(w.last) < w.every {
 		return nil
 	}
 	return w.flushLocked(ctx)

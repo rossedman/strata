@@ -4,12 +4,14 @@
 //   #lineage            #lineage?focus=<row id>&stale=1
 //   #search?q=<filter>&team=a&verdict=stale&page=2
 //   #image?d=<digest>
+//   #vulns              #vulns?t=<base ref or CVE id>
+//   #cleanup            #cleanup?scope=repo&where=<filter>
 (function () {
   "use strict";
 
   var COL = { fresh: "#5fd39a", drifting: "#e8c84a", stale: "#f08a5d", abandoned: "#a3a3ad" };
   var V = ["fresh", "drifting", "stale", "abandoned"];
-  var VIEWS = ["overview", "lineage", "search", "image"];
+  var VIEWS = ["overview", "lineage", "search", "vulns", "cleanup", "image"];
   var host = "";
 
   // ---------- helpers ----------
@@ -18,7 +20,7 @@
   function fmt(n) { return Math.round(n || 0).toLocaleString("en-US"); }
   function short(n) { n = n || 0; return n >= 1e6 ? (n / 1e6).toFixed(2) + "M" : n >= 1e4 ? (n / 1e3).toFixed(0) + "k" : n >= 1e3 ? (n / 1e3).toFixed(1) + "k" : String(n); }
   function bytes(n) { var u = ["B", "KiB", "MiB", "GiB", "TiB", "PiB"], i = 0; n = n || 0; while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; } return n.toFixed(i > 1 ? 1 : 0) + " " + u[i]; }
-  function nice(name) { name = name || ""; if (host && name.indexOf(host + "/") === 0) { name = name.slice(host.length + 1); } return name.replace(/^docker\.io\/library\//, ""); }
+  function nice(name) { name = name || ""; if (host && name.indexOf(host + "/") === 0) { name = name.slice(host.length + 1); } return name.replace(/^docker\.io\/library\//, "").replace(/@sha256:([0-9a-f]{12})[0-9a-f]{52}$/, "@$1"); }
   function ago(iso) {
     if (!iso) { return "—"; }
     var d = (Date.now() - new Date(iso).getTime()) / 864e5;
@@ -464,6 +466,109 @@
       "</dl>" + (ex.findings.length ? '<h2 style="margin-top:18px">Findings</h2><div class="find" style="margin-top:8px">' + ex.findings.map(function (f) { return "<div>" + esc(f) + "</div>"; }).join("") + "</div>" : "") + "</div></div></div>";
   }
 
+  // ---------- vulnerabilities ----------
+  // Bases ranked by how many images in use they carry vulnerabilities to;
+  // a base or a CVE opens its blast radius, by team, with a CSV export.
+  function isVulnID(t) { return /^(CVE|GHSA|ALAS|RHSA|DSA|DLA|USN|GO|PYSEC|OSV)-/i.test(t) && !/[\/:@]/.test(t); }
+  function exportLink(path, params, label) {
+    var u = new URL(path, location.href);
+    Object.keys(params).forEach(function (k) { if (params[k]) { u.searchParams.set(k, params[k]); } });
+    u.searchParams.set("format", "csv");
+    return '<a class="chip" href="' + esc(u.toString()) + '" download>' + esc(label) + "</a>";
+  }
+  function sev(n, cls) { return n == null ? '<span class="pct">—</span>' : '<span class="sev' + (n > 0 ? " " + cls : "") + ' num">' + fmt(n) + "</span>"; }
+  function vulnsView(el, params) {
+    var t = (params.get("t") || "").trim();
+    var head = '<div class="head"><div><h1>' + (t ? esc(nice(t)) : "Vulnerabilities") + '</h1><p class="sub">' +
+      (t ? (isVulnID(t) ? "Images whose scan found it, and unscanned images built on one of them. A scan without it stops the walk: that image was patched." : "Every image built on this base, at any depth.")
+        : "From the registry's own scans (ECR). Bases ranked by critical findings times the images built on them that are in use, pulled in the last 30 days.") +
+      "</p></div>" + cmdHTML(t ? "strata vulns impact " + t + " -o csv" : "strata vulns bases") + "</div>" +
+      '<form class="query" id="vform" style="max-width:640px"><input id="vt" type="text" value="' + esc(t) + '" placeholder="A base ref, or a vulnerability such as CVE-2024-3094" aria-label="Base or vulnerability"></form>';
+    el.innerHTML = head + '<p class="loading">Loading…</p>';
+    $("vform").addEventListener("submit", function (ev) { ev.preventDefault(); var v = $("vt").value.trim(); go("vulns", v ? { t: v } : {}); });
+    var body = el.querySelector(".loading");
+    if (!t) {
+      api("v1/vulns/bases", { limit: 50 }).then(function (bases) {
+        body.outerHTML = '<div class="panel"><header><h2>Bases carrying critical vulnerabilities</h2><span class="pct">click a base for its blast radius</span></header>' +
+          (bases.length ? '<div class="rtable"><table><thead><tr><th>Base</th><th class="r">Critical</th><th class="r">High</th><th class="r">Fixable</th><th class="r">Built on it</th><th class="r">In use</th><th class="r">Also vulnerable</th><th class="r">Teams</th></tr></thead><tbody>' +
+            bases.map(function (b) {
+              return '<tr data-href="#vulns?t=' + encodeURIComponent(b.ref) + '"><td><a class="linkish" style="color:var(--cream)" href="#vulns?t=' + encodeURIComponent(b.ref) + '">' + esc(nice(b.ref)) + '</a></td><td class="r">' + sev(b.critical, "crit") + '</td><td class="r">' + sev(b.high, "high") +
+                '</td><td class="r num">' + (b.fixable == null ? "—" : fmt(b.fixable)) + '</td><td class="r num">' + fmt(b.images) + '</td><td class="r num">' + fmt(b.in_use) + '</td><td class="r num">' + fmt(b.vulnerable) + '</td><td class="r num">' + fmt(b.groups) + "</td></tr>";
+            }).join("") + "</tbody></table></div>"
+            : '<div class="body"><div class="pending"><b>No vulnerable bases.</b> Either no base with images built on it has critical findings, or the index has no scans. strata records ECR scan counts while indexing; add <code>scan-findings: true</code> to a registry to fetch the vulnerabilities themselves, so you can follow a CVE.</div></div>') + "</div>";
+      }).catch(function (e) { body.outerHTML = '<p class="loading err">Could not load vulnerable bases: ' + esc(e.message) + "</p>"; });
+      return;
+    }
+    var q = isVulnID(t) ? { cve: t } : { ref: t };
+    api("v1/vulns/impact", Object.assign({ limit: 200 }, q)).then(function (im) {
+      var maxG = Math.max.apply(null, im.groups.map(function (g) { return g.images; }).concat([1]));
+      body.outerHTML =
+        '<div class="kpis">' + [
+          ["Images reached", fmt(im.total), ""],
+          ["In use", fmt(im.in_use), "pulled in the last 30 days"],
+          ["Teams", fmt(im.groups.filter(function (g) { return g.value; }).length), im.groups.some(function (g) { return !g.value; }) ? "plus images with no team" : ""],
+          ["Enters through", fmt(im.origins.length), im.origins.length === 1 ? esc(nice(im.origins[0].ref)) : "images"],
+          ["Export", exportLink("v1/vulns/impact", q, "Download CSV"), "every affected image"]
+        ].map(function (k) { return '<div class="kpi"><div class="k">' + k[0] + '</div><div class="v num">' + k[1] + '</div><div class="d">' + k[2] + "</div></div>"; }).join("") + "</div>" +
+        (im.total ? '<div class="grid2"><div class="panel"><header><h2>By team</h2><span class="pct">label.team</span></header><div class="body"><div class="bars">' +
+          im.groups.map(function (g) {
+            return '<div class="bar"><span class="n"><em>' + esc(g.value || "(no team)") + '</em></span><span class="c num">' + fmt(g.images) + " images · " + fmt(g.in_use) + " in use · " + fmt(g.repos) + ' repos</span><div class="mix"><i style="width:' + (100 * g.in_use / maxG).toFixed(1) + '%;background:var(--stale)"></i><i style="width:' + (100 * (g.images - g.in_use) / maxG).toFixed(1) + '%;background:var(--line-2)"></i></div></div>';
+          }).join("") + '</div></div></div><div class="panel"><header><h2>Enters through</h2></header><div class="body"><ul class="changes">' +
+          im.origins.slice(0, 12).map(function (o) { return '<li><span class="when num">' + fmt(o.images) + '</span><span><a class="linkish" href="#image?d=' + encodeURIComponent(o.digest) + '">' + esc(nice(o.ref)) + "</a></span></li>"; }).join("") + "</ul></div></div></div>" +
+          '<div class="panel"><header><h2>Images</h2><span class="pct">' + (im.images.length < im.total ? "first " + fmt(im.images.length) + " of " + fmt(im.total) + ", in use first · download the CSV for all" : "in use first") + '</span></header><div class="rtable"><table><thead><tr><th>Image</th><th>Team</th><th class="r">Critical</th><th class="r">High</th><th>Verdict</th><th class="r">Last pull</th><th>Evidence</th></tr></thead><tbody>' +
+          im.images.map(function (i) {
+            return '<tr data-href="#image?d=' + encodeURIComponent(i.digest) + '"><td class="trunc" title="' + esc(i.ref) + '">' + esc(nice(i.ref)) + "</td><td>" + esc(i.group || "—") + '</td><td class="r">' + sev(i.critical, "crit") + '</td><td class="r">' + sev(i.high, "high") + '</td><td><span class="pill"><i class="dot" style="background:' + (COL[i.stale] || "#6b6880") + '"></i>' + esc(i.stale || "—") + '</span></td><td class="r num">' + (i.last_pulled_days == null ? "—" : i.last_pulled_days + "d ago") + '</td><td class="pct">' + esc(i.evidence) + "</td></tr>";
+          }).join("") + "</tbody></table></div></div>"
+          : '<div class="panel"><div class="body"><p class="empty-state">' + (q.cve ? "No image's stored findings include " + esc(t) + ". Findings are fetched with <code>scan-findings: true</code>." : "Nothing is built on this base.") + "</p></div></div>");
+    }).catch(function (e) { body.outerHTML = '<p class="loading err">' + (e.status === 404 ? "This base is not in the index." : "Could not load the impact: " + esc(e.message)) + "</p>"; });
+  }
+
+  // ---------- cleanup ----------
+  function cleanupView(el, params) {
+    var scope = params.get("scope") === "repo" ? "repo" : "registry", where = params.get("where") || "";
+    el.innerHTML = '<div class="head"><div><h1>Cleanup</h1><p class="sub">Images safe to delete, abandoned by default: untagged, nothing built on them, not pulled in the policy window. Reclaimable counts each layer once, and only when no kept image still uses it. strata never deletes anything.</p></div>' +
+      cmdHTML("strata cleanup" + (where ? " --where '" + where.replace(/'/g, "'\\''") + "'" : "") + (scope === "repo" ? " --scope repo" : "") + " -o csv") + "</div>" +
+      '<form class="query" id="cform" style="max-width:760px"><input id="cwhere" type="text" value="' + esc(where) + '" placeholder=\'Candidates (default: stale = "abandoned")\' aria-label="Candidate filter"></form>' +
+      '<div class="chips"><button type="button" class="chip" data-scope="registry" aria-pressed="' + (scope === "registry") + '">Layers shared anywhere are kept</button><button type="button" class="chip" data-scope="repo" aria-pressed="' + (scope === "repo") + '">Layers are stored per repo</button></div>' +
+      '<p class="loading">Working out what can go…</p>';
+    $("cform").addEventListener("submit", function (ev) { ev.preventDefault(); var p = {}; if ($("cwhere").value.trim()) { p.where = $("cwhere").value.trim(); } if (scope === "repo") { p.scope = "repo"; } go("cleanup", p); });
+    var body = el.querySelector(".loading");
+    Promise.all([api("v1/cleanup", { where: where, scope: scope, limit: 100 }), api("v1/cleanup/lifecycle").catch(function () { return null; })]).then(function (r) {
+      var c = r[0], lcs = r[1] || [], maxR = Math.max.apply(null, c.repos.map(function (x) { return x.reclaimable_bytes; }).concat([1]));
+      var withPolicy = lcs.filter(function (l) { return l.policy; }).length, skipped = lcs.filter(function (l) { return !l.policy; });
+      body.outerHTML =
+        (notBuilt(lastStatus) ? pendingHTML(lastStatus) : "") +
+        '<div class="kpis">' + [
+          ["Reclaimable", bytes(c.reclaimable_bytes), "of " + bytes(c.size) + " the manifests state"],
+          ["Candidates", fmt(c.total), fmt(c.images) + " images"],
+          ["Repos", fmt(c.repos.length), "with candidates"],
+          ["Held back", fmt(c.held), "kept images are built on them or share their index"],
+          ["Export", exportLink("v1/cleanup", { where: where, scope: scope }, "Download CSV"), "every candidate"]
+        ].map(function (k) { return '<div class="kpi"><div class="k">' + k[0] + '</div><div class="v num">' + k[1] + '</div><div class="d">' + k[2] + "</div></div>"; }).join("") + "</div>" +
+        (c.total ? '<div class="grid2"><div class="panel"><header><h2>By repo</h2><span class="pct">freed by deleting that repo\'s candidates</span></header><div class="body"><div class="bars">' +
+          c.repos.slice(0, 15).map(function (x) {
+            return '<div class="bar" data-search-where="' + esc(x.repo) + '" role="button" tabindex="0"><span class="n"><em>' + esc(nice(x.repo)) + '</em></span><span class="c num">' + bytes(x.reclaimable_bytes) + " · " + fmt(x.candidates) + '</span><div class="mix"><i style="width:' + (100 * x.reclaimable_bytes / maxR).toFixed(1) + '%;background:var(--brand)"></i></div></div>';
+          }).join("") + "</div></div></div>" +
+          '<div class="panel"><header><h2>ECR lifecycle policies</h2>' + cmdHTML("strata cleanup lifecycle -o script") + '</header><div class="body"><p class="sub" style="margin:0 0 10px">One rule per repo expiring untagged images past the abandoned window, checked against the index first. ' +
+          fmt(withPolicy) + " of " + fmt(lcs.length) + " repos get a policy.</p>" +
+          (skipped.length ? '<ul class="changes">' + skipped.slice(0, 6).map(function (l) { return '<li><span class="when">skipped</span><span><b>' + esc(nice(l.repo)) + "</b> " + esc(l.skipped) + (l.conflicts.length ? ": " + esc(l.conflicts[0].reason) : "") + "</span></li>"; }).join("") + "</ul>" : "") + "</div></div></div>" +
+          '<div class="panel"><header><h2>Candidates</h2><span class="pct">' + (c.candidates.length < c.total ? "largest " + fmt(c.candidates.length) + " of " + fmt(c.total) + " · download the CSV for all" : "largest first") + '</span></header><div class="rtable"><table><thead><tr><th>Repo</th><th>Digest</th><th class="r">Images</th><th class="r">Size</th><th class="r">Frees alone</th><th class="r">Pushed</th><th class="r">Last pull</th><th>Why</th></tr></thead><tbody>' +
+          c.candidates.map(function (x) {
+            return '<tr data-href="#image?d=' + encodeURIComponent(x.digest) + '"><td>' + esc(nice(x.repo)) + '</td><td class="mono">' + esc(x.digest.slice(7, 19)) + '</td><td class="r num">' + fmt(x.images) + '</td><td class="r num">' + bytes(x.size) + '</td><td class="r num">' + bytes(x.exclusive_bytes) + '</td><td class="r num">' + (x.pushed_days == null ? "—" : x.pushed_days + "d ago") + '</td><td class="r num">' + (x.last_pulled_days == null ? "never" : x.last_pulled_days + "d ago") + '</td><td class="trunc pct" title="' + esc(x.reason) + '">' + esc(x.reason || "—") + "</td></tr>";
+          }).join("") + "</tbody></table></div></div>"
+          : '<div class="panel"><div class="body"><p class="empty-state">No candidates' + (where ? " match this filter" : ": nothing is abandoned") + ".</p></div></div>");
+    }).catch(function (e) {
+      if (e.status === 400) { body.outerHTML = '<p class="qerr">' + esc(e.message) + "</p>"; return; }
+      body.outerHTML = '<p class="loading err">Could not load cleanup candidates: ' + esc(e.message) + "</p>";
+    });
+  }
+  document.addEventListener("click", function (e) {
+    var b = e.target.closest("[data-scope]");
+    if (b) { var p = parseHash().params; p.set("scope", b.getAttribute("data-scope")); location.hash = "#cleanup?" + p.toString(); return; }
+    var r = e.target.closest("[data-search-where]");
+    if (r) { go("cleanup", { where: (parseHash().params.get("where") || 'stale = "abandoned"') + ' and repo = "' + r.getAttribute("data-search-where") + '"' }); }
+  });
+
   // ---------- routing ----------
   function route() {
     var r = parseHash();
@@ -474,6 +579,8 @@
     if (r.view === "overview") { overview(el); }
     if (r.view === "lineage") { lineageView(el, r.params); }
     if (r.view === "search") { searchView(el, r.params); }
+    if (r.view === "vulns") { vulnsView(el, r.params); }
+    if (r.view === "cleanup") { cleanupView(el, r.params); }
     if (r.view === "image") { imageView(el, r.params); }
     if (r.view !== "search") { $("q").value = ""; }
   }

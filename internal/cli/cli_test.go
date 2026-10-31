@@ -220,6 +220,21 @@ func TestRemote(t *testing.T) {
 	if sum, err := r.Summary(ctx, ""); err != nil || sum.Total.Manifests != 5 {
 		t.Fatalf("summary = %v", err)
 	}
+	if b, err := r.VulnBases(ctx, service.VulnBasesOptions{Severity: "high", InUseDays: 7}); err != nil || len(b) != 0 {
+		t.Fatalf("vuln bases = %v, %v", b, err)
+	}
+	if im, err := r.Impact(ctx, service.ImpactOptions{Ref: "base/debian:12"}); err != nil || im.Total != 3 || len(im.Images) != 3 {
+		t.Fatalf("impact = %+v, %v", im, err)
+	}
+	if _, err := r.Impact(ctx, service.ImpactOptions{Ref: "nope:1"}); !errors.Is(err, service.ErrNotFound) {
+		t.Fatalf("impact missing = %v", err)
+	}
+	if c, err := r.Cleanup(ctx, service.CleanupOptions{Where: "tags = 0", Scope: service.ScopeRepo, Limit: 5}); err != nil || c.Scope != service.ScopeRepo {
+		t.Fatalf("cleanup = %+v, %v", c, err)
+	}
+	if lcs, err := r.Lifecycles(ctx, service.LifecycleOptions{Repos: []string{"*/base/*"}, Days: 1, IncludeConflicts: true}); err != nil || len(lcs) != 2 {
+		t.Fatalf("lifecycles = %+v, %v", lcs, err)
+	}
 
 	// Without the header every call fails cleanly.
 	bare, _ := NewRemote(srv.URL, "")
@@ -239,6 +254,10 @@ func TestRemote(t *testing.T) {
 		func() error { _, err := down.Stale(ctx, ""); return err },
 		func() error { _, err := down.Roots(ctx); return err },
 		func() error { _, err := down.Summary(ctx, ""); return err },
+		func() error { _, err := down.VulnBases(ctx, service.VulnBasesOptions{}); return err },
+		func() error { _, err := down.Impact(ctx, service.ImpactOptions{CVE: "CVE-1"}); return err },
+		func() error { _, err := down.Cleanup(ctx, service.CleanupOptions{}); return err },
+		func() error { _, err := down.Lifecycles(ctx, service.LifecycleOptions{}); return err },
 	} {
 		if f() == nil {
 			t.Error("call to an unreachable server succeeded")

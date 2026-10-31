@@ -32,6 +32,7 @@ registries:
     exclude-tags: ["pr-*", "sha-*"]
     platforms: [linux/amd64]       # skip other platforms of multi-arch images
     pushed-since: 1y               # ECR only: skip images pushed before this
+    scan-findings: true            # ECR only: fetch each image's vulnerabilities
 
 # Upstream bases fetched so roots resolve to names.
 external:
@@ -93,6 +94,7 @@ log-level: info
 | `registries[].exclude-tags` | `[]` | Skip tags matching one of these globs |
 | `registries[].platforms` | all | Keep only these platforms of multi-platform images |
 | `registries[].pushed-since` | | Skip images pushed longer ago than this, such as `90d` (ECR only) |
+| `registries[].scan-findings` | `false` | Fetch each image's vulnerabilities, not only counts by severity (ECR only); see [Vulnerabilities](guides/vulnerabilities.md) |
 | `external` | `[]` | Full refs of upstream bases to fetch |
 | `referrers` | `true` | Fetch referrers and cosign tags |
 | `platform` | `linux/amd64` | Default platform for multi-platform refs |

@@ -1,6 +1,7 @@
 // Package ecr lists Amazon ECR registries through the ECR API instead of
 // the distribution API. One DescribeImages page covers up to 1,000
-// manifests with their tags, push time and last pull time, so a re-crawl
+// manifests with their tags, push time, last pull time and scan counts by
+// severity, so a re-crawl
 // costs one call per thousand images rather than one request per tag, and
 // BatchGetImage fetches up to 100 manifests per call, so a first crawl
 // fetches only image configs one by one. It also signs registry requests
@@ -12,6 +13,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -26,6 +28,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/authn"
 
 	"github.com/rossedman/strata/internal/crawl"
+	"github.com/rossedman/strata/internal/model"
 )
 
 // hostPattern matches ECR registry hosts: account.dkr.ecr[-fips].region
@@ -45,6 +48,7 @@ func ParseHost(host string) (account, region string, ok bool) {
 type API interface {
 	ecr.DescribeRepositoriesAPIClient
 	ecr.DescribeImagesAPIClient
+	ecr.DescribeImageScanFindingsAPIClient
 	BatchGetImage(ctx context.Context, in *ecr.BatchGetImageInput, opts ...func(*ecr.Options)) (*ecr.BatchGetImageOutput, error)
 	GetAuthorizationToken(ctx context.Context, in *ecr.GetAuthorizationTokenInput, opts ...func(*ecr.Options)) (*ecr.GetAuthorizationTokenOutput, error)
 }
@@ -182,10 +186,119 @@ func (r *Registry) Images(ctx context.Context, repo string) ([]crawl.Listed, err
 				LastPulled:   aws.ToTime(d.LastRecordedPullTime),
 				Subject:      aws.ToString(d.SubjectManifestDigest),
 				ArtifactType: aws.ToString(d.ArtifactMediaType),
+				Scan:         scanOf(d),
 			})
 		}
 	}
 	return out, nil
+}
+
+// scanOf returns the scan summary DescribeImages reports for an image, or
+// nil when it reports none, as for images under basic scanning.
+func scanOf(d types.ImageDetail) *model.Scan {
+	if d.ImageScanStatus == nil && d.ImageScanFindingsSummary == nil {
+		return nil
+	}
+	sc := &model.Scan{Source: "ecr", Status: scanStatus(d.ImageScanStatus)}
+	if s := d.ImageScanFindingsSummary; s != nil {
+		sc.CompletedAt = aws.ToTime(s.ImageScanCompletedAt)
+		for sev, n := range s.FindingSeverityCounts {
+			sc.Count(sev, int(n))
+		}
+		if sc.Status == "" {
+			sc.Status = model.ScanComplete
+		}
+	}
+	return sc
+}
+
+// Scan returns the latest scan of an image with its findings, from basic
+// or enhanced scanning. One finding is returned per vulnerable package.
+// Basic scanning reports its results only here, not in DescribeImages.
+// An image ECR has not scanned has status model.ScanNone.
+func (r *Registry) Scan(ctx context.Context, repo, digest string) (*model.Scan, error) {
+	p := ecr.NewDescribeImageScanFindingsPaginator(r.api, &ecr.DescribeImageScanFindingsInput{
+		RegistryId:     aws.String(r.account),
+		RepositoryName: aws.String(repo),
+		ImageId:        &types.ImageIdentifier{ImageDigest: aws.String(digest)},
+		MaxResults:     aws.Int32(1000),
+	})
+	sc := &model.Scan{Digest: digest, Source: "ecr", HasFindings: true}
+	for first := true; p.HasMorePages(); first = false {
+		r.calls.Add(1)
+		page, err := p.NextPage(ctx)
+		var none *types.ScanNotFoundException
+		if errors.As(err, &none) {
+			return &model.Scan{Digest: digest, Source: "ecr", Status: model.ScanNone, HasFindings: true}, nil
+		}
+		if err != nil {
+			return nil, fmt.Errorf("describe scan findings of %s@%s: %w", repo, digest, err)
+		}
+		f := page.ImageScanFindings
+		if first {
+			sc.Status = scanStatus(page.ImageScanStatus)
+			if f != nil {
+				if sc.Status == "" {
+					sc.Status = model.ScanComplete
+				}
+				sc.CompletedAt = aws.ToTime(f.ImageScanCompletedAt)
+				for sev, n := range f.FindingSeverityCounts {
+					sc.Count(sev, int(n))
+				}
+			}
+		}
+		if f != nil {
+			sc.Findings = append(sc.Findings, findingsOf(f)...)
+		}
+	}
+	return sc, nil
+}
+
+// scanStatus maps ECR's scan status to strata's.
+func scanStatus(st *types.ImageScanStatus) string {
+	if st == nil {
+		return ""
+	}
+	switch st.Status {
+	// Enhanced scanning reports ACTIVE for an image it keeps rescanning;
+	// its findings are as complete as a finished scan's.
+	case types.ScanStatusComplete, types.ScanStatusActive:
+		return model.ScanComplete
+	}
+	return strings.ToLower(string(st.Status))
+}
+
+// findingsOf converts one page of basic and enhanced findings.
+func findingsOf(f *types.ImageScanFindings) []model.Finding {
+	var out []model.Finding
+	for _, f := range f.Findings {
+		fd := model.Finding{ID: aws.ToString(f.Name), Severity: model.NormalizeSeverity(string(f.Severity)), URI: aws.ToString(f.Uri)}
+		for _, a := range f.Attributes {
+			switch aws.ToString(a.Key) {
+			case "package_name":
+				fd.Package = aws.ToString(a.Value)
+			case "package_version":
+				fd.Version = aws.ToString(a.Value)
+			}
+		}
+		out = append(out, fd)
+	}
+	for _, f := range f.EnhancedFindings {
+		d := f.PackageVulnerabilityDetails
+		if d == nil {
+			continue
+		}
+		base := model.Finding{ID: aws.ToString(d.VulnerabilityId), Severity: model.NormalizeSeverity(aws.ToString(f.Severity)), URI: aws.ToString(d.SourceUrl)}
+		if len(d.VulnerablePackages) == 0 {
+			out = append(out, base)
+		}
+		for _, vp := range d.VulnerablePackages {
+			fd := base
+			fd.Package, fd.Version, fd.FixedIn = aws.ToString(vp.Name), aws.ToString(vp.Version), aws.ToString(vp.FixedInVersion)
+			out = append(out, fd)
+		}
+	}
+	return out
 }
 
 // Resolve returns credentials for this registry and anonymous for every

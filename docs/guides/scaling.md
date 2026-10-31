@@ -124,6 +124,7 @@ strata lists ECR registries (`<account>.dkr.ecr.<region>.amazonaws.com`) through
 - The listing includes when each image was pushed and last pulled. Push times are queryable as `pushed` and `pushed_age`, and appear as a **Pushed** facet in the web UI.
 - The last-pull time feeds the staleness engine's pull signal (`stale.last_pulled`), with no pull data to import. ECR updates it about once a day.
 - Artifacts attached to an image, such as SBOMs and signatures, come with the listing, so there are no referrers requests.
+- Enhanced scanning (Amazon Inspector) reports each image's vulnerability counts in the listing too. With `scan-findings: true`, strata also calls `DescribeImageScanFindings` once per image whose scan changed, and once a week per image under basic scanning, which leaves counts out of the listing. See [Vulnerabilities](vulnerabilities.md).
 - `pushed-since` skips images pushed before the window without fetching them.
 
 ```yaml
@@ -145,12 +146,14 @@ Credentials come from the standard AWS chain: environment variables, `AWS_PROFIL
     { "Effect": "Allow", "Action": "ecr:GetAuthorizationToken", "Resource": "*" },
     {
       "Effect": "Allow",
-      "Action": ["ecr:DescribeRepositories", "ecr:DescribeImages", "ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer"],
+      "Action": ["ecr:DescribeRepositories", "ecr:DescribeImages", "ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer", "ecr:DescribeImageScanFindings"],
       "Resource": "arn:aws:ecr:us-east-1:123456789012:repository/*"
     }
   ]
 }
 ```
+
+`ecr:DescribeImageScanFindings` is needed only with `scan-findings`.
 
 Set `provider: distribution` to crawl an ECR host through the plain registry protocol instead, for example when the identity can pull but not describe. Push and pull times and `pushed-since` aren't available then.
 

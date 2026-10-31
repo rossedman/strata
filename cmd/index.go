@@ -36,7 +36,9 @@ filter skips are left as the index last saw them.
 
 ECR registries are listed through the ECR API, with credentials from the AWS
 credential chain. That needs no request per tag, records push and last-pull
-times, and allows --pushed-since.`,
+times and vulnerability scan counts, and allows --pushed-since. With
+--scan-findings it also records each scanned image's vulnerabilities, so
+queries such as vuln.id = CVE-2024-3094 work.`,
 	Example: `  strata index --registry reg.io --workers 64
   strata index --registry localhost:5000 --insecure --repo payments/api
   strata index --registry reg.io --include-repo 'team-*/**' --exclude-tag 'pr-*' --platforms linux/amd64
@@ -51,7 +53,8 @@ times, and allows --pushed-since.`,
 				Workers: v.GetInt("workers"), Rate: v.GetFloat64("rate"), Provider: v.GetString("provider"),
 				IncludeRepos: v.GetStringSlice("include-repo"), ExcludeRepos: v.GetStringSlice("exclude-repo"),
 				IncludeTags: v.GetStringSlice("include-tag"), ExcludeTags: v.GetStringSlice("exclude-tag"),
-				Platforms: v.GetStringSlice("platforms"), PushedSince: v.GetString("pushed-since")}
+				Platforms: v.GetStringSlice("platforms"), PushedSince: v.GetString("pushed-since"),
+				ScanFindings: v.GetBool("scan-findings")}
 			if err := r.Check(); err != nil {
 				return err
 			}
@@ -72,6 +75,9 @@ times, and allows --pushed-since.`,
 				}
 				if f.Changed("pushed-since") {
 					r.PushedSince = v.GetString("pushed-since")
+				}
+				if f.Changed("scan-findings") {
+					r.ScanFindings = v.GetBool("scan-findings")
 				}
 				if err := r.Check(); err != nil {
 					return fmt.Errorf("%s: %w", r.Host, err)
@@ -128,6 +134,9 @@ times, and allows --pushed-since.`,
 				ui.Fprint(cli.Out(cmd), fmt.Sprintf("%s filtered out %d repos, %d tags, %d images\n",
 					ui.Dim.Render("      "), c.ReposFiltered, c.TagsFiltered, c.ImagesFiltered))
 			}
+			if c.Scans > 0 {
+				ui.Fprint(cli.Out(cmd), fmt.Sprintf("%s %d vulnerability scans, findings fetched for %d\n", ui.Dim.Render("      "), c.Scans, c.Findings))
+			}
 			ui.Fprint(cli.Out(cmd), fmt.Sprintf("%s %d images indexed\n", ui.Dim.Render("      "), r.Images))
 		}
 		return nil
@@ -156,6 +165,7 @@ func crawlOptions(ctx context.Context, r config.Registry) (crawl.Options, error)
 		UserAgent:         "strata/" + cli.Version,
 		Logger:            state.Logger,
 		Filter:            filter,
+		Findings:          r.ScanFindings,
 	}
 	if r.Host != "" && r.UsesECR() {
 		reg, err := newECR(ctx, r.Host)
@@ -196,6 +206,7 @@ func init() {
 	f.StringSlice("exclude-tag", nil, "skip tags matching this glob, such as pr-* (repeatable)")
 	f.StringSlice("platforms", nil, "keep only these platforms of multi-platform images, such as linux/amd64 (repeatable)")
 	f.String("pushed-since", "", "skip images pushed longer ago than this, such as 90d (ECR only)")
+	f.Bool("scan-findings", false, "fetch each scanned image's vulnerabilities, not only counts by severity (ECR only)")
 	f.StringP("output", "o", "text", "output format: text or json")
 	rootCmd.AddCommand(indexCmd)
 }

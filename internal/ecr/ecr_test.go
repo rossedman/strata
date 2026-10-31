@@ -9,6 +9,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -20,6 +21,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ecr/types"
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
+
+	"github.com/rossedman/strata/internal/model"
 )
 
 const host = "123456789012.dkr.ecr.us-east-1.amazonaws.com"
@@ -52,6 +55,7 @@ type fakeAPI struct {
 	repos     [][]types.Repository
 	images    [][]types.ImageDetail
 	manifests map[string]string
+	findings  []*types.ImageScanFindings
 	asked     [][]string
 	tokens    int
 	token     string
@@ -96,6 +100,18 @@ func (f *fakeAPI) DescribeImages(_ context.Context, in *ecr.DescribeImagesInput,
 	i := page(in.NextToken)
 	out := &ecr.DescribeImagesOutput{ImageDetails: f.images[i]}
 	if i+1 < len(f.images) {
+		out.NextToken = aws.String(string(rune('0' + i + 1)))
+	}
+	return out, nil
+}
+
+func (f *fakeAPI) DescribeImageScanFindings(_ context.Context, in *ecr.DescribeImageScanFindingsInput, _ ...func(*ecr.Options)) (*ecr.DescribeImageScanFindingsOutput, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	i := page(in.NextToken)
+	out := &ecr.DescribeImageScanFindingsOutput{ImageScanFindings: f.findings[i]}
+	if i+1 < len(f.findings) {
 		out.NextToken = aws.String(string(rune('0' + i + 1)))
 	}
 	return out, nil
@@ -239,7 +255,16 @@ func TestNew(t *testing.T) {
 		case strings.HasSuffix(target, ".DescribeImages"):
 			_ = json.NewEncoder(w).Encode(map[string]any{"imageDetails": []map[string]any{{
 				"imageDigest": "sha256:1", "imageTags": []string{"v1"}, "imagePushedAt": 1764547200,
+				"imageScanStatus":          map[string]any{"status": "ACTIVE"},
+				"imageScanFindingsSummary": map[string]any{"imageScanCompletedAt": 1764550800, "findingSeverityCounts": map[string]int{"CRITICAL": 2, "UNTRIAGED": 1}},
 			}}})
+		case strings.HasSuffix(target, ".DescribeImageScanFindings"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"imageScanStatus": map[string]any{"status": "COMPLETE"}, "imageScanFindings": map[string]any{
+				"findingSeverityCounts": map[string]int{"CRITICAL": 1}, "enhancedFindings": []map[string]any{{
+					"severity": "CRITICAL",
+					"packageVulnerabilityDetails": map[string]any{"vulnerabilityId": "CVE-2024-3094", "sourceUrl": "https://nvd.nist.gov/vuln/detail/CVE-2024-3094",
+						"vulnerablePackages": []map[string]any{{"name": "xz-utils", "version": "5.6.0", "fixedInVersion": "5.6.1"}}},
+				}}}})
 		default:
 			http.Error(w, "unexpected "+target, http.StatusBadRequest)
 		}
@@ -259,12 +284,92 @@ func TestNew(t *testing.T) {
 	if err != nil || len(images) != 1 || images[0].PushedAt.Unix() != 1764547200 {
 		t.Fatalf("images = %+v, %v", images, err)
 	}
+	if sc := images[0].Scan; sc == nil || sc.Status != model.ScanComplete || sc.Critical != 2 || sc.Other != 1 || sc.CompletedAt.Unix() != 1764550800 {
+		t.Fatalf("scan = %+v", images[0].Scan)
+	}
+	sc, err := r.Scan(context.Background(), "payments/api", "sha256:1")
+	if err != nil || sc.Status != model.ScanComplete || sc.Critical != 1 || len(sc.Findings) != 1 || sc.Findings[0] != (model.Finding{ID: "CVE-2024-3094", Package: "xz-utils", Version: "5.6.0", Severity: "critical", FixedIn: "5.6.1", URI: "https://nvd.nist.gov/vuln/detail/CVE-2024-3094"}) {
+		t.Fatalf("scan = %+v, %v", sc, err)
+	}
 	got, err := r.Manifests(context.Background(), "payments/api", []string{digestOf(stubManifest)})
 	if err != nil || string(got[digestOf(stubManifest)]) != stubManifest {
 		t.Fatalf("manifests = %v, %v", got, err)
 	}
+	if r.Calls() != 4 {
+		t.Fatalf("calls = %d, want 4", r.Calls())
+	}
+}
+
+func TestScanOf(t *testing.T) {
+	t.Parallel()
+	done := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name string
+		in   types.ImageDetail
+		want *model.Scan
+	}{
+		{"never scanned", types.ImageDetail{}, nil},
+		{"basic scan", types.ImageDetail{
+			ImageScanStatus: &types.ImageScanStatus{Status: types.ScanStatusComplete},
+			ImageScanFindingsSummary: &types.ImageScanFindingsSummary{ImageScanCompletedAt: aws.Time(done),
+				FindingSeverityCounts: map[string]int32{"CRITICAL": 1, "HIGH": 2, "MEDIUM": 3, "LOW": 4, "INFORMATIONAL": 5, "UNDEFINED": 1}},
+		}, &model.Scan{Source: "ecr", Status: "complete", CompletedAt: done, Critical: 1, High: 2, Medium: 3, Low: 4, Other: 6}},
+		{"failed", types.ImageDetail{ImageScanStatus: &types.ImageScanStatus{Status: types.ScanStatusUnsupportedImage}},
+			&model.Scan{Source: "ecr", Status: "unsupported_image"}},
+		{"summary without status", types.ImageDetail{ImageScanFindingsSummary: &types.ImageScanFindingsSummary{ImageScanCompletedAt: aws.Time(done)}},
+			&model.Scan{Source: "ecr", Status: "complete", CompletedAt: done}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := scanOf(tc.in)
+			if (got == nil) != (tc.want == nil) || got != nil && !reflect.DeepEqual(*got, *tc.want) {
+				t.Fatalf("scanOf = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestScan(t *testing.T) {
+	t.Parallel()
+	done := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	api := &fakeAPI{findings: []*types.ImageScanFindings{
+		{ImageScanCompletedAt: aws.Time(done), FindingSeverityCounts: map[string]int32{"HIGH": 1, "MEDIUM": 1, "LOW": 1}, Findings: []types.ImageScanFinding{{Name: aws.String("CVE-2023-1"), Severity: types.FindingSeverityHigh, Uri: aws.String("https://x/1"),
+			Attributes: []types.Attribute{{Key: aws.String("package_name"), Value: aws.String("openssl")}, {Key: aws.String("package_version"), Value: aws.String("3.0.1")}}}}},
+		nil,
+		{EnhancedFindings: []types.EnhancedImageScanFinding{
+			{Severity: aws.String("MEDIUM"), PackageVulnerabilityDetails: &types.PackageVulnerabilityDetails{VulnerabilityId: aws.String("CVE-2023-2"),
+				VulnerablePackages: []types.VulnerablePackage{{Name: aws.String("zlib"), Version: aws.String("1.2"), FixedInVersion: aws.String("1.3")}, {Name: aws.String("zlib-dev"), Version: aws.String("1.2")}}}},
+			{Severity: aws.String("LOW"), PackageVulnerabilityDetails: &types.PackageVulnerabilityDetails{VulnerabilityId: aws.String("CVE-2023-3")}},
+			{Severity: aws.String("LOW")},
+		}},
+	}}
+	r := NewWithAPI(context.Background(), host, "123456789012", api)
+	sc, err := r.Scan(context.Background(), "a", "sha256:1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := sc.Findings
+	if sc.Status != model.ScanComplete || !sc.CompletedAt.Equal(done) || sc.High != 1 || sc.Low != 1 || !sc.HasFindings || sc.Digest != "sha256:1" {
+		t.Fatalf("scan = %+v", sc)
+	}
+	want := []model.Finding{
+		{ID: "CVE-2023-1", Package: "openssl", Version: "3.0.1", Severity: "high", URI: "https://x/1"},
+		{ID: "CVE-2023-2", Package: "zlib", Version: "1.2", Severity: "medium", FixedIn: "1.3"},
+		{ID: "CVE-2023-2", Package: "zlib-dev", Version: "1.2", Severity: "medium"},
+		{ID: "CVE-2023-3", Severity: "low"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("findings = %+v", got)
+	}
 	if r.Calls() != 3 {
 		t.Fatalf("calls = %d, want 3", r.Calls())
+	}
+	api.err = &types.ScanNotFoundException{Message: aws.String("no scan")}
+	if sc, err := r.Scan(context.Background(), "a", "sha256:1"); err != nil || sc.Status != model.ScanNone || !sc.HasFindings {
+		t.Fatalf("scan = %+v, %v", sc, err)
+	}
+	api.err = errors.New("AccessDenied")
+	if _, err := r.Scan(context.Background(), "a", "sha256:1"); err == nil || !strings.Contains(err.Error(), "describe scan findings of a@sha256:1") {
+		t.Fatalf("err = %v", err)
 	}
 }
 

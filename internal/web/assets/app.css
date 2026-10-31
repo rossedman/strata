@@ -249,3 +249,8 @@ table.layers { min-width: 0; }
 .view { grid-template-columns: minmax(0, 1fr); }
 #searchcmd, #lincmd { display: block; min-width: 0; max-width: 100%; }
 .kv dt { overflow-wrap: anywhere; }
+.sev { color: var(--mist); }
+.sev.crit { color: var(--conflict); font-weight: 700; }
+.sev.high { color: var(--stale); font-weight: 600; }
+.chip[aria-pressed="true"] { border-color: var(--brand); color: var(--cream); background: var(--brand-wash); }
+.kpi a.chip { font-family: var(--sans); font-size: 13px; text-decoration: none; }

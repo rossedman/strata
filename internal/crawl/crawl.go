@@ -57,8 +57,17 @@ type Options struct {
 	Filter Filter
 	// Lister lists repos and images through the registry's own API, such
 	// as ECR's, instead of the catalog, tag list and one request per tag.
-	// It also reports push and pull times.
+	// It also reports push and pull times and vulnerability scans.
 	Lister Lister
+	// Findings fetches each image's vulnerability scan with its
+	// findings, when the Lister is a ScanFetcher. It costs a call per
+	// image whose listed scan changed since the last crawl, or, for a
+	// registry whose listing does not report scans, whose findings are
+	// older than FindingsEvery.
+	Findings bool
+	// FindingsEvery is how old fetched findings may get before they are
+	// fetched again; zero means a week.
+	FindingsEvery time.Duration
 	// Redactions are regular expressions scrubbed from history commands.
 	Redactions []string
 	// BatchSize is how many images are written per transaction.
@@ -89,6 +98,10 @@ type Stats struct {
 	TagMoves   int64 `json:"tag_moves"`
 	Requests   int64 `json:"requests"`
 	Referrers  int64 `json:"referrers"`
+	// Scans counts vulnerability scans listed; Findings counts the scans
+	// whose findings were fetched.
+	Scans    int64 `json:"scans"`
+	Findings int64 `json:"findings"`
 	// Filtered counts what the filter skipped before fetching it.
 	ReposFiltered  int64 `json:"repos_filtered"`
 	TagsFiltered   int64 `json:"tags_filtered"`
@@ -127,6 +140,14 @@ type CallCounter interface {
 	Calls() int64
 }
 
+// ScanFetcher is a Lister that can return the registry's vulnerability
+// scan of one image with its findings, as ECR's
+// DescribeImageScanFindings does. The scan it returns has HasFindings
+// set; an image never scanned has status model.ScanNone.
+type ScanFetcher interface {
+	Scan(ctx context.Context, repo, digest string) (*model.Scan, error)
+}
+
 // Listed is one manifest a Lister reports.
 type Listed struct {
 	Digest    string
@@ -139,6 +160,8 @@ type Listed struct {
 	// signature, is attached to; ArtifactType says what it is.
 	Subject      string
 	ArtifactType string
+	// Scan is the registry's vulnerability scan of the manifest, or nil.
+	Scan *model.Scan
 }
 
 // crawler holds the state shared by one crawl.
@@ -374,9 +397,10 @@ func (c *crawler) crawlRepo(ctx context.Context, repo name.Repository) error {
 	batch := &store.Batch{}
 	var tags []string
 	var listed map[string]*Listed
+	var scans []*model.Scan
 	if c.opts.Lister != nil {
 		var err error
-		if tags, listed, err = c.listImages(ctx, repo, batch); err != nil {
+		if tags, listed, scans, err = c.listImages(ctx, repo, batch); err != nil {
 			return err
 		}
 	} else {
@@ -458,6 +482,9 @@ func (c *crawler) crawlRepo(ctx context.Context, repo name.Repository) error {
 				atomic.AddInt64(&c.stats.TagMoves, 1)
 			}
 			batch.Images = append(batch.Images, res.images...)
+			for _, img := range res.images {
+				seenDigest[img.Digest] = true
+			}
 			batch.Index = append(batch.Index, res.index...)
 			batch.Referrers = append(batch.Referrers, res.refs...)
 			atomic.AddInt64(&c.stats.Images, int64(len(res.images)))
@@ -467,6 +494,18 @@ func (c *crawler) crawlRepo(ctx context.Context, repo name.Repository) error {
 	}
 	if err := g.Wait(); err != nil {
 		return err
+	}
+	if len(scans) > 0 {
+		indexed := func(d string) bool { return known[d] || seenDigest[d] }
+		if err := c.findings(ctx, repo, scans, indexed, now); err != nil {
+			return err
+		}
+		for _, sc := range scans {
+			if sc.Status != "" {
+				batch.Scans = append(batch.Scans, *sc)
+			}
+		}
+		atomic.AddInt64(&c.stats.Scans, int64(len(batch.Scans)))
 	}
 	current := map[string]bool{}
 	for _, t := range tags {
@@ -488,17 +527,28 @@ func (c *crawler) crawlRepo(ctx context.Context, repo name.Repository) error {
 // listImages lists a repo through the Lister. It returns the sorted tags
 // and the manifest each points at, and adds push times and attached
 // artifacts to the batch, so no per-tag requests are needed.
-func (c *crawler) listImages(ctx context.Context, repo name.Repository, batch *store.Batch) ([]string, map[string]*Listed, error) {
+func (c *crawler) listImages(ctx context.Context, repo name.Repository, batch *store.Batch) ([]string, map[string]*Listed, []*model.Scan, error) {
 	full := RepoName(repo)
 	images, err := c.opts.Lister.Images(ctx, repo.RepositoryStr())
 	if err != nil {
-		return nil, nil, fmt.Errorf("list images: %w", err)
+		return nil, nil, nil, fmt.Errorf("list images: %w", err)
 	}
+	var scans []*model.Scan
 	byTag := map[string]*Listed{}
 	var tags []string
 	for i := range images {
 		l := &images[i]
 		batch.Pushes = append(batch.Pushes, model.Push{Repo: full, Digest: l.Digest, PushedAt: l.PushedAt, LastPulled: l.LastPulled})
+		// Registries scan the platform images of an index, which they
+		// list on their own, not the index.
+		if l.Scan != nil || !types.MediaType(l.MediaType).IsIndex() {
+			sc := &model.Scan{Digest: l.Digest}
+			if l.Scan != nil {
+				*sc = *l.Scan
+				sc.Digest = l.Digest
+			}
+			scans = append(scans, sc)
+		}
 		if l.Subject != "" && c.opts.Referrers {
 			batch.Referrers = append(batch.Referrers, model.Referrer{Subject: l.Subject, Digest: l.Digest, ArtifactType: l.ArtifactType, Kind: model.ClassifyArtifact(l.ArtifactType)})
 			atomic.AddInt64(&c.stats.Referrers, 1)
@@ -509,7 +559,63 @@ func (c *crawler) listImages(ctx context.Context, repo name.Repository, batch *s
 		}
 	}
 	sort.Strings(tags)
-	return tags, byTag, nil
+	return tags, byTag, scans, nil
+}
+
+// findings fetches the scan, with its findings, of each indexed image
+// whose listed scan changed since its findings were stored, or, when the
+// listing reports no scan, whose findings are older than FindingsEvery.
+// scans holds one entry per listed manifest; an entry with no status had
+// no scan listed. An image whose scan cannot be fetched keeps what the
+// listing said and is tried again on the next crawl.
+func (c *crawler) findings(ctx context.Context, repo name.Repository, scans []*model.Scan, indexed func(string) bool, now time.Time) error {
+	sf, ok := c.opts.Lister.(ScanFetcher)
+	if !ok || !c.opts.Findings {
+		return nil
+	}
+	every := c.opts.FindingsEvery
+	if every <= 0 {
+		every = 7 * 24 * time.Hour
+	}
+	stored, err := c.st.ScannedFindings(ctx, RepoName(repo))
+	if err != nil {
+		return err
+	}
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(c.opts.Workers)
+	for _, sc := range scans {
+		if !indexed(sc.Digest) {
+			continue
+		}
+		prev, ok := stored[sc.Digest]
+		switch {
+		case !ok:
+		case sc.Status != "":
+			if prev.Key == sc.Key() {
+				continue
+			}
+		case now.Sub(prev.FetchedAt) < every:
+			continue
+		}
+		g.Go(func() error {
+			c.acquire(gctx)
+			defer c.release()
+			got, err := sf.Scan(gctx, repo.RepositoryStr(), sc.Digest)
+			if err != nil {
+				if gctx.Err() != nil {
+					return gctx.Err()
+				}
+				c.opts.Logger.Warn("fetch vulnerability scan failed", "repo", RepoName(repo), "digest", sc.Digest, "err", err)
+				return nil
+			}
+			d := sc.Digest
+			*sc = *got
+			sc.Digest, sc.HasFindings, sc.FetchedAt = d, true, now
+			atomic.AddInt64(&c.stats.Findings, 1)
+			return nil
+		})
+	}
+	return g.Wait()
 }
 
 // prefetchBatch is how many manifests one ManifestFetcher call asks for;

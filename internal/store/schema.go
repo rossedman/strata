@@ -121,6 +121,34 @@ var schema = []string{
 		last_pulled TIMESTAMPTZ,
 		PRIMARY KEY (repo, digest)
 	)`,
+	// scans holds the registry's vulnerability scan of each manifest.
+	// findings is whether the vulnerabilities rows for the scan were
+	// fetched, at fetched_at; fixable counts those with a fixed version.
+	`CREATE TABLE IF NOT EXISTS scans (
+		digest       VARCHAR PRIMARY KEY,
+		source       VARCHAR,
+		status       VARCHAR,
+		completed_at TIMESTAMPTZ,
+		critical     INTEGER,
+		high         INTEGER,
+		medium       INTEGER,
+		low          INTEGER,
+		other        INTEGER,
+		findings     BOOLEAN,
+		fixable      INTEGER,
+		fetched_at   TIMESTAMPTZ
+	)`,
+	`CREATE TABLE IF NOT EXISTS vulnerabilities (
+		digest   VARCHAR,
+		id       VARCHAR,
+		package  VARCHAR,
+		version  VARCHAR,
+		severity VARCHAR,
+		fixed_in VARCHAR,
+		uri      VARCHAR,
+		PRIMARY KEY (digest, id, package)
+	)`,
+	`CREATE INDEX IF NOT EXISTS vulnerabilities_id ON vulnerabilities (id)`,
 	`CREATE TABLE IF NOT EXISTS edges (
 		child      VARCHAR,
 		parent     VARCHAR,
@@ -265,7 +293,13 @@ var schema = []string{
 			s.last_pulled_days AS stale_last_pulled_days,
 			coalesce(s.eol_base, false) AS stale_eol_base,
 			coalesce(s.label_policy, false) AS stale_label_policy,
-			coalesce(s.inferred, false) AS stale_inferred
+			coalesce(s.inferred, false) AS stale_inferred,
+			coalesce(sc.status = 'complete', false) AS vuln_scanned,
+			sc.completed_at AS vuln_scanned_at,
+			date_diff('day', sc.completed_at, now()) AS vuln_scan_age_days,
+			sc.critical AS vuln_critical, sc.high AS vuln_high, sc.medium AS vuln_medium, sc.low AS vuln_low,
+			sc.critical + sc.high + sc.medium + sc.low + sc.other AS vuln_total,
+			CASE WHEN sc.findings THEN sc.fixable END AS vuln_fixable
 		FROM images i
 		LEFT JOIN labels l ON l.digest = i.digest
 		LEFT JOIN image_refs r ON r.digest = i.digest
@@ -276,5 +310,6 @@ var schema = []string{
 		LEFT JOIN referrer_kinds refx ON refx.subject = i.index_digest
 		LEFT JOIN push_times pu ON pu.digest = i.digest
 		LEFT JOIN push_times pux ON pux.digest = i.index_digest
-		LEFT JOIN staleness s ON s.digest = i.digest`,
+		LEFT JOIN staleness s ON s.digest = i.digest
+		LEFT JOIN scans sc ON sc.digest = i.digest AND sc.status = 'complete'`,
 }

@@ -24,6 +24,9 @@ const (
 	kTime
 	kBool
 	kVerdict
+	// kFinding matches a column of the vulnerabilities an image's scan
+	// found; expr names the column.
+	kFinding
 )
 
 // Field describes one queryable field.
@@ -79,6 +82,17 @@ var staticFields = []Field{
 	{Name: "stale.eol_base", Doc: "the root base is past end of life", kind: kBool, expr: "stale_eol_base"},
 	{Name: "stale.label_policy", Doc: "labels mark the image deprecated or expired", kind: kBool, expr: "stale_label_policy"},
 	{Name: "stale.inferred", Doc: "a signal was approximated without tag history", kind: kBool, expr: "stale_inferred"},
+	{Name: "vuln.scanned", Doc: "the registry has a finished vulnerability scan of the image (ECR)", kind: kBool, expr: "vuln_scanned"},
+	{Name: "vuln.scanned_at", Doc: "when the image's last scan completed", kind: kTime, expr: "vuln_scanned_at"},
+	{Name: "vuln.scan_age", Doc: "days since the image's last scan completed", kind: kDays, expr: "vuln_scan_age_days"},
+	{Name: "vuln.critical", Doc: "critical vulnerabilities the scan found; unset when not scanned", kind: kInt, expr: "vuln_critical"},
+	{Name: "vuln.high", Doc: "high vulnerabilities the scan found", kind: kInt, expr: "vuln_high"},
+	{Name: "vuln.medium", Doc: "medium vulnerabilities the scan found", kind: kInt, expr: "vuln_medium"},
+	{Name: "vuln.low", Doc: "low vulnerabilities the scan found", kind: kInt, expr: "vuln_low"},
+	{Name: "vuln.total", Doc: "vulnerabilities of any severity the scan found", kind: kInt, expr: "vuln_total"},
+	{Name: "vuln.fixable", Doc: "vulnerabilities with a fixed version (needs scan-findings)", kind: kInt, expr: "vuln_fixable"},
+	{Name: "vuln.id", Doc: "a vulnerability the scan found, such as CVE-2024-3094 (needs scan-findings)", kind: kFinding, expr: "id"},
+	{Name: "vuln.package", Doc: "a package with a vulnerability, such as openssl (needs scan-findings)", kind: kFinding, expr: "package"},
 	{Name: "config.user", Doc: "the user the image runs as", kind: kString, expr: "config_user"},
 	{Name: "config.entrypoint", Doc: "entrypoint arguments", kind: kList, expr: "config_entrypoint"},
 	{Name: "config.cmd", Doc: "cmd arguments", kind: kList, expr: "config_cmd"},
@@ -136,6 +150,9 @@ func Expr(name string) (string, error) {
 		return "parent", nil
 	case "root":
 		return "root", nil
+	}
+	if f.kind == kFinding {
+		return "", fmt.Errorf("%s can filter but not be selected or grouped by", f.Name)
 	}
 	return f.expr, nil
 }
@@ -246,6 +263,17 @@ func (c *compiler) compare(n Compare) (string, error) {
 		return &SyntaxError{n.Pos, fmt.Sprintf("operator %s does not apply to %s", n.Op, f.Name)}
 	}
 	switch f.kind {
+	case kFinding:
+		ph := c.arg(n.Value.Text)
+		switch n.Op {
+		case "=":
+			return findingIn(f.expr + " = " + ph), nil
+		case "!=":
+			return "(NOT " + findingIn(f.expr+" = "+ph) + ")", nil
+		case "~":
+			return findingIn(f.expr + " GLOB " + ph), nil
+		}
+		return "", bad()
 	case kList, kRef:
 		ph := c.arg(n.Value.Text)
 		switch n.Op {
@@ -308,6 +336,9 @@ func (c *compiler) in(n In) (string, error) {
 	if f.kind == kList || f.kind == kRef {
 		return "list_has_any(" + f.expr + ", [" + strings.Join(phs, ", ") + "])", nil
 	}
+	if f.kind == kFinding {
+		return findingIn(f.expr + " IN (" + strings.Join(phs, ", ") + ")"), nil
+	}
 	return "(" + f.expr + " IN (" + strings.Join(phs, ", ") + "))", nil
 }
 
@@ -322,8 +353,16 @@ func (c *compiler) exists(n Exists) (string, error) {
 		return "(len(coalesce(" + f.expr + ", [])) > 0)", nil
 	case kRef:
 		return "(" + f.present + ")", nil
+	case kFinding:
+		return findingIn("true"), nil
 	}
 	return "(" + f.expr + " IS NOT NULL)", nil
+}
+
+// findingIn matches images with a stored finding meeting cond. Findings
+// kept from an older scan, whose counts have since changed, are left out.
+func findingIn(cond string) string {
+	return "(digest IN (SELECT v.digest FROM vulnerabilities v SEMI JOIN scans s ON s.digest = v.digest AND s.findings WHERE " + cond + "))"
 }
 
 // flag compiles a field used as a condition on its own.

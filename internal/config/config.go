@@ -46,6 +46,10 @@ type Registry struct {
 	// PushedSince skips images pushed longer ago than this, such as 90d or
 	// 1y. It needs the ECR API.
 	PushedSince string `mapstructure:"pushed-since"`
+	// ScanFindings fetches each scanned image's vulnerabilities, not only
+	// its counts by severity. It needs the ECR API and costs one call per
+	// image whose scan changed since the last crawl.
+	ScanFindings bool `mapstructure:"scan-findings"`
 }
 
 // Providers.
@@ -90,6 +94,9 @@ func (r Registry) Check() error {
 	}
 	if r.PushedSince != "" && !r.UsesECR() {
 		return fmt.Errorf("pushed-since needs a registry that reports push times, such as ECR")
+	}
+	if r.ScanFindings && !r.UsesECR() {
+		return fmt.Errorf("scan-findings needs a registry that reports vulnerability scans, such as ECR")
 	}
 	return nil
 }

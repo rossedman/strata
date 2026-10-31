@@ -7,10 +7,13 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/getkin/kin-openapi/openapi3filter"
 	"github.com/getkin/kin-openapi/routers/gorillamux"
 
+	"github.com/rossedman/strata/internal/model"
+	"github.com/rossedman/strata/internal/store"
 	"github.com/rossedman/strata/internal/testenv"
 	"github.com/rossedman/strata/pkg/client"
 )
@@ -155,6 +158,85 @@ func TestEndpoints(t *testing.T) {
 	nope := "nope"
 	if sum, _ := c.GetSummaryWithResponse(ctx, &client.GetSummaryParams{GroupBy: &nope}); sum.JSON400 == nil {
 		t.Fatalf("bad summary = %d", sum.StatusCode())
+	}
+}
+
+func TestVulnEndpoints(t *testing.T) {
+	t.Parallel()
+	c, e := serve(t, Options{})
+	debian := e.Reg.Digest("debian")
+	if err := e.Svc.Store.Write(ctx, &store.Batch{Scans: []model.Scan{{Digest: debian, Status: model.ScanComplete, Critical: 1,
+		HasFindings: true, FetchedAt: time.Now(), Findings: []model.Finding{{ID: "CVE-T", Package: "libc", Severity: "critical"}}}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.Svc.Refresh(ctx); err != nil {
+		t.Fatal(err)
+	}
+	bases, err := c.GetVulnBasesWithResponse(ctx, nil)
+	if err != nil || bases.JSON200 == nil || len(*bases.JSON200) != 1 || (*bases.JSON200)[0].Images != 3 {
+		t.Fatalf("bases = %d %s", bases.StatusCode(), bases.Body)
+	}
+	team := "tag"
+	if b, _ := c.GetVulnBasesWithResponse(ctx, &client.GetVulnBasesParams{GroupBy: &team}); b.JSON400 == nil {
+		t.Fatalf("bases by list field = %d", b.StatusCode())
+	}
+	ref, limit := "base/debian:12", 1
+	im, err := c.GetVulnImpactWithResponse(ctx, &client.GetVulnImpactParams{Ref: &ref, Limit: &limit})
+	if err != nil || im.JSON200 == nil || im.JSON200.Total != 3 || len(im.JSON200.Images) != 1 {
+		t.Fatalf("impact = %d %s", im.StatusCode(), im.Body)
+	}
+	cve, csv := "CVE-T", client.GetVulnImpactParamsFormatCsv
+	exp, err := c.GetVulnImpactWithResponse(ctx, &client.GetVulnImpactParams{Cve: &cve, Format: &csv})
+	if err != nil || exp.StatusCode() != http.StatusOK || !strings.HasPrefix(string(exp.Body), "digest,ref,repo,group") || strings.Count(string(exp.Body), "\n") != 5 {
+		t.Fatalf("export = %d %s", exp.StatusCode(), exp.Body)
+	}
+	if r, _ := c.GetVulnImpactWithResponse(ctx, nil); r.JSON400 == nil {
+		t.Fatalf("impact without a target = %d", r.StatusCode())
+	}
+	missing := "nope:1"
+	if r, _ := c.GetVulnImpactWithResponse(ctx, &client.GetVulnImpactParams{Ref: &missing}); r.JSON404 == nil {
+		t.Fatalf("impact of a missing base = %d", r.StatusCode())
+	}
+	_ = e.Svc.Store.Close()
+	if r, _ := c.GetVulnBasesWithResponse(ctx, nil); r.StatusCode() != http.StatusInternalServerError {
+		t.Fatalf("bases on closed index = %d", r.StatusCode())
+	}
+	if r, _ := c.GetVulnImpactWithResponse(ctx, &client.GetVulnImpactParams{Cve: &cve}); r.StatusCode() != http.StatusInternalServerError {
+		t.Fatalf("impact on closed index = %d", r.StatusCode())
+	}
+}
+
+func TestCleanupEndpoints(t *testing.T) {
+	t.Parallel()
+	c, e := serve(t, Options{})
+	where := "tags = 0"
+	cl, err := c.GetCleanupWithResponse(ctx, &client.GetCleanupParams{Where: &where})
+	if err != nil || cl.JSON200 == nil || cl.JSON200.Where != where {
+		t.Fatalf("cleanup = %d %s", cl.StatusCode(), cl.Body)
+	}
+	all, csv := "", client.GetCleanupParamsFormatCsv
+	exp, err := c.GetCleanupWithResponse(ctx, &client.GetCleanupParams{Where: &all, Format: &csv})
+	if err != nil || exp.StatusCode() != http.StatusOK || !strings.HasPrefix(string(exp.Body), "repo,digest,images") {
+		t.Fatalf("export = %d %s", exp.StatusCode(), exp.Body)
+	}
+	bad := "nope = 1"
+	if r, _ := c.GetCleanupWithResponse(ctx, &client.GetCleanupParams{Where: &bad}); r.JSON400 == nil {
+		t.Fatalf("bad cleanup = %d", r.StatusCode())
+	}
+	days, yes := 1, true
+	lc, err := c.GetLifecyclesWithResponse(ctx, &client.GetLifecyclesParams{Days: &days, IncludeConflicts: &yes, Repo: &[]string{"*/payments/*"}})
+	if err != nil || lc.JSON200 == nil || len(*lc.JSON200) != 2 || (*lc.JSON200)[0].Policy == nil {
+		t.Fatalf("lifecycle = %d %s", lc.StatusCode(), lc.Body)
+	}
+	if r, _ := c.GetLifecyclesWithResponse(ctx, &client.GetLifecyclesParams{Repo: &[]string{"["}}); r.JSON400 == nil {
+		t.Fatalf("bad glob = %d", r.StatusCode())
+	}
+	_ = e.Svc.Store.Close()
+	if r, _ := c.GetCleanupWithResponse(ctx, nil); r.StatusCode() != http.StatusInternalServerError {
+		t.Fatalf("cleanup on closed index = %d", r.StatusCode())
+	}
+	if r, _ := c.GetLifecyclesWithResponse(ctx, nil); r.StatusCode() != http.StatusInternalServerError {
+		t.Fatalf("lifecycle on closed index = %d", r.StatusCode())
 	}
 }
 

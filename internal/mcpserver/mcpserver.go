@@ -45,6 +45,36 @@ type StaleInput struct {
 	GroupBy string `json:"group_by,omitempty" jsonschema:"group by repo, root or a field such as label.team"`
 }
 
+// VulnBasesInput asks which bases carry the most vulnerabilities.
+type VulnBasesInput struct {
+	Severity  string `json:"severity,omitempty" jsonschema:"rank by critical (default) or high findings"`
+	GroupBy   string `json:"group_by,omitempty" jsonschema:"field whose distinct values are counted, label.team by default"`
+	InUseDays int    `json:"in_use_days,omitempty" jsonschema:"an image pulled within this many days counts as in use (default 30)"`
+	Limit     int    `json:"limit,omitempty" jsonschema:"number of bases (default 20)"`
+}
+
+// VulnBasesOutput lists vulnerable bases.
+type VulnBasesOutput struct {
+	Bases []service.VulnBase `json:"bases"`
+}
+
+// ImpactInput asks what a base or a vulnerability reaches.
+type ImpactInput struct {
+	Ref       string `json:"ref,omitempty" jsonschema:"a base image ref; set this or cve"`
+	CVE       string `json:"cve,omitempty" jsonschema:"a vulnerability id such as CVE-2024-3094; set this or ref"`
+	Filter    string `json:"filter,omitempty" jsonschema:"narrow the affected images with the query language, such as stale.last_pulled < 30d"`
+	GroupBy   string `json:"group_by,omitempty" jsonschema:"field to group images by, label.team by default"`
+	InUseDays int    `json:"in_use_days,omitempty" jsonschema:"an image pulled within this many days counts as in use (default 30)"`
+	Limit     int    `json:"limit,omitempty" jsonschema:"most images to list; totals count every image (default 200)"`
+}
+
+// CleanupInput asks which images can be deleted.
+type CleanupInput struct {
+	Where string `json:"where,omitempty" jsonschema:"select candidates with the query language; default stale = \"abandoned\""`
+	Scope string `json:"scope,omitempty" jsonschema:"registry (default) counts a layer as freed when no kept image anywhere uses it; repo when none in the same repo does"`
+	Limit int    `json:"limit,omitempty" jsonschema:"most candidates to list, largest first (default 50); totals count them all"`
+}
+
 // TableOutput is a tabular answer.
 type TableOutput struct {
 	Columns []string `json:"columns"`
@@ -70,11 +100,12 @@ Fields: repo, tag, ref, digest, created, age (180d), size (512MB), layers, platf
 parent, root (compared against refs), descendants, children, tags, generation, conflict, has:sbom,
 has:signature, has:attestation, stale (fresh|drifting|stale|abandoned), stale.base_drift, stale.superseded,
 stale.untagged, stale.eol_base, stale.label_policy, config.user, config.entrypoint, config.cmd, config.ports,
-config.env_keys, config.workdir, config.healthcheck, label.<key>, missing:<key>.
+config.env_keys, config.workdir, config.healthcheck, vuln.critical, vuln.high, vuln.total, vuln.fixable,
+vuln.scanned, vuln.id, vuln.package, label.<key>, missing:<key>.
 Example: label.env = "prod" and stale.eol_base`
 
 // New returns an MCP server with tools for explain, ancestry,
-// descendants, query, stale and roots.
+// descendants, query, stale, roots, vuln_bases, vuln_impact and cleanup.
 func New(svc *service.Service, version string) *mcp.Server {
 	s := mcp.NewServer(&mcp.Implementation{Name: "strata", Version: version}, nil)
 	ro := &mcp.ToolAnnotations{ReadOnlyHint: true}
@@ -125,6 +156,38 @@ func New(svc *service.Service, version string) *mcp.Server {
 				roots = []service.Root{}
 			}
 			return nil, RootsOutput{Roots: roots}, err
+		})
+	mcp.AddTool(s, &mcp.Tool{Name: "vuln_bases", Annotations: ro,
+		Description: "Rank the base images whose registry scan found vulnerabilities by how many images built on them are in use, with counts of affected images and teams."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in VulnBasesInput) (*mcp.CallToolResult, VulnBasesOutput, error) {
+			bases, err := svc.VulnBases(ctx, service.VulnBasesOptions{Severity: in.Severity, GroupBy: in.GroupBy, InUseDays: in.InUseDays, Limit: in.Limit})
+			return nil, VulnBasesOutput{Bases: bases}, err
+		})
+	mcp.AddTool(s, &mcp.Tool{Name: "vuln_impact", Annotations: ro,
+		Description: "Blast radius of a base (every image built on it) or a vulnerability id (every image whose scan found it, plus unscanned images built on those), grouped by team, with the images it enters through."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in ImpactInput) (*mcp.CallToolResult, *service.Impact, error) {
+			im, err := svc.Impact(ctx, service.ImpactOptions{Ref: in.Ref, CVE: in.CVE, Filter: in.Filter, GroupBy: in.GroupBy, InUseDays: in.InUseDays})
+			if err != nil {
+				return nil, nil, err
+			}
+			limit := in.Limit
+			if limit <= 0 {
+				limit = 200
+			}
+			if len(im.Images) > limit {
+				im.Images = im.Images[:limit]
+			}
+			return nil, im, nil
+		})
+	mcp.AddTool(s, &mcp.Tool{Name: "cleanup", Annotations: ro,
+		Description: "Deletion candidates (abandoned images by default, whole multi-platform indexes only, never a base a kept image is built on) and the storage deleting them frees, counting layers shared with kept images as not freed. Nothing is deleted."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in CleanupInput) (*mcp.CallToolResult, *service.Cleanup, error) {
+			limit := in.Limit
+			if limit <= 0 {
+				limit = 50
+			}
+			c, err := svc.Cleanup(ctx, service.CleanupOptions{Where: in.Where, Scope: in.Scope, Limit: limit})
+			return nil, c, err
 		})
 	return s
 }

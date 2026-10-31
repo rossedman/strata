@@ -127,6 +127,9 @@ type Batch struct {
 	// Pushes are push and pull times reported by the registry's API. They
 	// change between crawls, so they replace what was stored.
 	Pushes []model.Push
+	// Scans are the registry's vulnerability scans. They replace what was
+	// stored; a scan with findings also replaces the stored findings.
+	Scans []model.Scan
 	// Run and Done checkpoint repos of a crawl run in the same
 	// transaction as their data, so a resumed crawl never skips a repo
 	// whose rows were lost.
@@ -136,7 +139,7 @@ type Batch struct {
 
 // Len returns the number of records in the batch.
 func (b *Batch) Len() int {
-	return len(b.Images) + len(b.Index) + len(b.Tags) + len(b.DeleteTags) + len(b.Events) + len(b.Referrers) + len(b.Pushes) + len(b.Done)
+	return len(b.Images) + len(b.Index) + len(b.Tags) + len(b.DeleteTags) + len(b.Events) + len(b.Referrers) + len(b.Pushes) + len(b.Scans) + len(b.Done)
 }
 
 // Write stores a batch in one transaction, bulk-loading through DuckDB's
@@ -154,7 +157,10 @@ func (s *Store) Write(ctx context.Context, b *Batch) error {
 	if _, err := conn.ExecContext(ctx, "BEGIN TRANSACTION"); err != nil {
 		return fmt.Errorf("begin: %w", err)
 	}
-	err = conn.Raw(func(dc any) error { return writeBatch(dc.(driver.Conn), b) })
+	err = deleteFindings(ctx, conn, b.Scans)
+	if err == nil {
+		err = conn.Raw(func(dc any) error { return writeBatch(dc.(driver.Conn), b) })
+	}
 	if err == nil {
 		err = deleteTags(ctx, conn, b.DeleteTags)
 	}
@@ -296,6 +302,28 @@ func deleteTags(ctx context.Context, conn *sql.Conn, tags []model.Tag) error {
 	return nil
 }
 
+// sameScan matches a stored scan to an incoming one with the same key.
+const sameScan = `(scans.completed_at IS NOT DISTINCT FROM excluded.completed_at AND scans.critical = excluded.critical
+	AND scans.high = excluded.high AND scans.medium = excluded.medium AND scans.low = excluded.low AND scans.other = excluded.other)`
+
+// deleteFindings removes the stored findings of scans whose findings are
+// being replaced.
+func deleteFindings(ctx context.Context, conn *sql.Conn, scans []model.Scan) error {
+	var digests []string
+	for _, sc := range scans {
+		if sc.HasFindings {
+			digests = append(digests, sc.Digest)
+		}
+	}
+	if len(digests) == 0 {
+		return nil
+	}
+	if _, err := conn.ExecContext(ctx, `DELETE FROM vulnerabilities WHERE list_contains(?, digest)`, digests); err != nil {
+		return fmt.Errorf("delete findings: %w", err)
+	}
+	return nil
+}
+
 // rowsFunc appends a table's rows to an appender.
 type rowsFunc func(a *duckdb.Appender) error
 
@@ -432,6 +460,40 @@ func writeBatch(conn driver.Conn, b *Batch) error {
 			}
 			return nil
 		}, len(b.Pushes)},
+		// A scan listed again without its findings keeps the findings
+		// stored for it, unless the scan itself is newer.
+		{"scans", `INSERT INTO scans
+			SELECT DISTINCT ON (col1) * FROM appended_data ORDER BY col1, col10 DESC, col4 DESC NULLS LAST
+			ON CONFLICT (digest) DO UPDATE SET
+				source = excluded.source, status = excluded.status, completed_at = excluded.completed_at,
+				critical = excluded.critical, high = excluded.high, medium = excluded.medium,
+				low = excluded.low, other = excluded.other,
+				findings = excluded.findings OR (scans.findings AND ` + sameScan + `),
+				fixable = CASE WHEN excluded.findings THEN excluded.fixable WHEN scans.findings AND ` + sameScan + ` THEN scans.fixable END,
+				fetched_at = CASE WHEN excluded.findings THEN excluded.fetched_at WHEN scans.findings AND ` + sameScan + ` THEN scans.fetched_at END`, func(a *duckdb.Appender) error {
+			for _, sc := range b.Scans {
+				var fixable any
+				if sc.HasFindings {
+					fixable = clamp32(sc.Fixable())
+				}
+				if err := a.AppendRow(sc.Digest, sc.Source, sc.Status, nullTime(sc.CompletedAt),
+					clamp32(sc.Critical), clamp32(sc.High), clamp32(sc.Medium), clamp32(sc.Low), clamp32(sc.Other),
+					sc.HasFindings, fixable, nullTime(sc.FetchedAt)); err != nil {
+					return err
+				}
+			}
+			return nil
+		}, len(b.Scans)},
+		{"vulnerabilities", "INSERT OR IGNORE INTO vulnerabilities SELECT DISTINCT ON (col1, col2, col3) * FROM appended_data", func(a *duckdb.Appender) error {
+			for _, sc := range b.Scans {
+				for _, f := range sc.Findings {
+					if err := a.AppendRow(sc.Digest, f.ID, f.Package, f.Version, f.Severity, f.FixedIn, f.URI); err != nil {
+						return err
+					}
+				}
+			}
+			return nil
+		}, len(b.Scans)},
 		{"crawl_repos", "INSERT OR REPLACE INTO crawl_repos SELECT * FROM appended_data", func(a *duckdb.Appender) error {
 			for _, repo := range b.Done {
 				if err := a.AppendRow(b.Run, repo, now); err != nil {
@@ -559,6 +621,38 @@ func (s *Store) KnownImage(ctx context.Context, digest string) (bool, error) {
 		SELECT count(*) FROM (SELECT digest FROM images WHERE digest = ? UNION ALL
 		SELECT index_digest FROM index_manifests WHERE index_digest = ?)`, digest, digest).Scan(&n)
 	return n > 0, err
+}
+
+// StoredScan is what the index holds about the findings of a scan.
+type StoredScan struct {
+	// Key is the model.Scan.Key of the scan the findings came from.
+	Key       string
+	FetchedAt time.Time
+}
+
+// ScannedFindings returns the stored findings of a repo's manifests, by
+// digest, so a re-crawl fetches findings only for scans that changed or
+// were fetched long ago.
+func (s *Store) ScannedFindings(ctx context.Context, repo string) (map[string]StoredScan, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT s.digest, s.completed_at, s.critical, s.high, s.medium, s.low, s.other, s.fetched_at
+		FROM scans s SEMI JOIN pushes p ON p.digest = s.digest AND p.repo = ?
+		WHERE s.findings AND s.fetched_at IS NOT NULL`, repo)
+	if err != nil {
+		return nil, fmt.Errorf("read scans: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[string]StoredScan{}
+	for rows.Next() {
+		var sc model.Scan
+		var done sql.NullTime
+		if err := rows.Scan(&sc.Digest, &done, &sc.Critical, &sc.High, &sc.Medium, &sc.Low, &sc.Other, &sc.FetchedAt); err != nil {
+			return nil, err
+		}
+		sc.CompletedAt = done.Time
+		out[sc.Digest] = StoredScan{Key: sc.Key(), FetchedAt: sc.FetchedAt}
+	}
+	return out, rows.Err()
 }
 
 // Tags returns where each tag of a repo pointed at the last crawl.

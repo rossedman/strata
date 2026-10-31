@@ -3,6 +3,7 @@
 package model
 
 import (
+	"fmt"
 	"strings"
 	"time"
 )
@@ -197,4 +198,103 @@ type Edge struct {
 	Source     string `json:"source"`
 	Confidence string `json:"confidence"`
 	Evidence   string `json:"evidence"`
+}
+
+// Scan is a vulnerability scan of one manifest, as the registry reports
+// it. Counts are by severity; Other holds informational, untriaged and
+// undefined findings.
+type Scan struct {
+	Digest      string    `json:"digest"`
+	Source      string    `json:"source"`
+	Status      string    `json:"status"`
+	CompletedAt time.Time `json:"completed_at"`
+	Critical    int       `json:"critical"`
+	High        int       `json:"high"`
+	Medium      int       `json:"medium"`
+	Low         int       `json:"low"`
+	Other       int       `json:"other"`
+	// HasFindings is whether Findings were fetched, at FetchedAt; a scan
+	// without them keeps whatever findings were stored for the same scan
+	// before.
+	HasFindings bool      `json:"has_findings"`
+	FetchedAt   time.Time `json:"fetched_at"`
+	Findings    []Finding `json:"findings,omitempty"`
+}
+
+// Scan statuses strata sets itself; others are the registry's, in lower
+// case.
+const (
+	// ScanComplete is a finished scan.
+	ScanComplete = "complete"
+	// ScanNone is an image the registry has not scanned.
+	ScanNone = "not_scanned"
+)
+
+// Finding is one vulnerability in one package of a scanned image.
+type Finding struct {
+	ID       string `json:"id"`
+	Package  string `json:"package"`
+	Version  string `json:"version"`
+	Severity string `json:"severity"`
+	FixedIn  string `json:"fixed_in,omitempty"`
+	URI      string `json:"uri,omitempty"`
+}
+
+// Severities, from most to least severe.
+const (
+	SeverityCritical = "critical"
+	SeverityHigh     = "high"
+	SeverityMedium   = "medium"
+	SeverityLow      = "low"
+	SeverityOther    = "other"
+)
+
+// NormalizeSeverity maps a scanner's severity name to one of strata's.
+func NormalizeSeverity(s string) string {
+	switch strings.ToLower(s) {
+	case "critical":
+		return SeverityCritical
+	case "high":
+		return SeverityHigh
+	case "medium", "moderate":
+		return SeverityMedium
+	case "low", "negligible":
+		return SeverityLow
+	}
+	return SeverityOther
+}
+
+// Count adds n findings of a severity to the scan's counts.
+func (s *Scan) Count(severity string, n int) {
+	switch NormalizeSeverity(severity) {
+	case SeverityCritical:
+		s.Critical += n
+	case SeverityHigh:
+		s.High += n
+	case SeverityMedium:
+		s.Medium += n
+	case SeverityLow:
+		s.Low += n
+	default:
+		s.Other += n
+	}
+}
+
+// Key identifies a scan result: its completion time and counts. Findings
+// stored under one key need no fetching again while the key holds; a
+// rescan, or a vulnerability database update that changes the counts,
+// changes it.
+func (s *Scan) Key() string {
+	return fmt.Sprintf("%s|%d|%d|%d|%d|%d", s.CompletedAt.UTC().Format(time.RFC3339Nano), s.Critical, s.High, s.Medium, s.Low, s.Other)
+}
+
+// Fixable counts the distinct vulnerabilities with a fixed version.
+func (s *Scan) Fixable() int {
+	ids := map[string]bool{}
+	for _, f := range s.Findings {
+		if f.FixedIn != "" {
+			ids[f.ID] = true
+		}
+	}
+	return len(ids)
 }

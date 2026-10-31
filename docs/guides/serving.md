@@ -48,7 +48,7 @@ Requests without that header get a 401; this covers the UI, the API and `/mcp`. 
 
 ## One owner of the index
 
-DuckDB allows one writing process per file. While `strata serve` runs, the read commands (`explain`, `ancestry`, `descendants`, `query`, `stale`, `roots`, `summary`) find the locked file, check for a server on `serve.addr`, and send their query to it. To point commands at a server elsewhere:
+DuckDB allows one writing process per file. While `strata serve` runs, the read commands (`explain`, `ancestry`, `descendants`, `query`, `stale`, `roots`, `summary`, `vulns`, `cleanup`) find the locked file, check for a server on `serve.addr`, and send their query to it. To point commands at a server elsewhere:
 
 ```sh
 strata stale --server https://strata.internal.example.com
@@ -59,7 +59,7 @@ Commands that write (`index`, `refresh`, `history import`) need the file itself;
 
 ## MCP for agents
 
-The MCP server offers six read-only tools: `explain`, `ancestry`, `descendants`, `query`, `stale` and `roots`. The `query` tool's description includes the filter language, so an agent can answer questions such as "which prod images are on an EOL base?" directly.
+The MCP server offers nine read-only tools: `explain`, `ancestry`, `descendants`, `query`, `stale`, `roots`, `vuln_bases`, `vuln_impact` and `cleanup`. The `query` tool's description includes the filter language, so an agent can answer questions such as "which prod images are on an EOL base?" directly.
 
 Over stdio, for Claude Code and other local clients:
 

@@ -218,6 +218,22 @@ func TestIncrementalRefreshMatchesFull(t *testing.T) {
 			tg := fixture.Tag(base, "stable", day)
 			write(t, st, &store.Batch{Tags: []model.Tag{tg}, Events: []model.TagEvent{fixture.Event(tg.Repo, tg.Tag, tg.Digest, day)}})
 		}},
+		{"scans are listed, then findings fetched", func() {
+			done := fixture.Epoch.AddDate(0, 0, day)
+			write(t, st, &store.Batch{Scans: []model.Scan{
+				{Digest: fixture.Digest("manifest:app-3"), Source: "ecr", Status: model.ScanComplete, CompletedAt: done, Critical: 2},
+				{Digest: fixture.Digest("manifest:os-0"), Source: "ecr", Status: model.ScanComplete, CompletedAt: done, High: 1},
+			}})
+			write(t, st, &store.Batch{Scans: []model.Scan{
+				{Digest: fixture.Digest("manifest:app-3"), Source: "ecr", Status: model.ScanComplete, CompletedAt: done, Critical: 2,
+					HasFindings: true, FetchedAt: done, Findings: []model.Finding{{ID: "CVE-1", Package: "a", Severity: "critical", FixedIn: "2"}}},
+			}})
+		}},
+		{"a rescan changes counts", func() {
+			write(t, st, &store.Batch{Scans: []model.Scan{
+				{Digest: fixture.Digest("manifest:os-0"), Source: "ecr", Status: model.ScanComplete, CompletedAt: fixture.Epoch.AddDate(0, 0, day+1), High: 3},
+			}})
+		}},
 		{"only time passes", func() { day += 30 }},
 	}
 	for _, r := range rounds {

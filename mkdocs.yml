@@ -92,6 +92,8 @@ nav:
       - Staleness: guides/staleness.md
       - Query language: guides/query-language.md
       - Exploring the footprint: guides/footprint.md
+      - Vulnerabilities: guides/vulnerabilities.md
+      - Cleanup: guides/cleanup.md
       - Graphs: guides/graphs.md
       - Serving, API and MCP: guides/serving.md
   - Reference:
@@ -100,6 +102,8 @@ nav:
           - strata ancestry: reference/commands/strata_ancestry.md
           - strata bases: reference/commands/strata_bases.md
           - strata bases similar: reference/commands/strata_bases_similar.md
+          - strata cleanup: reference/commands/strata_cleanup.md
+          - strata cleanup lifecycle: reference/commands/strata_cleanup_lifecycle.md
           - strata descendants: reference/commands/strata_descendants.md
           - strata diff: reference/commands/strata_diff.md
           - strata explain: reference/commands/strata_explain.md
@@ -122,6 +126,9 @@ nav:
           - strata trend: reference/commands/strata_trend.md
           - strata ui: reference/commands/strata_ui.md
           - strata version: reference/commands/strata_version.md
+          - strata vulns: reference/commands/strata_vulns.md
+          - strata vulns bases: reference/commands/strata_vulns_bases.md
+          - strata vulns impact: reference/commands/strata_vulns_impact.md
       - HTTP API: reference/api.md
   - Project:
       - Roadmap: roadmap.md

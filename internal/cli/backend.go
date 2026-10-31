@@ -25,6 +25,10 @@ type Backend interface {
 	Stale(ctx context.Context, groupBy string) (*service.Table, error)
 	Roots(ctx context.Context) ([]service.Root, error)
 	Summary(ctx context.Context, groupBy string) (*service.Summary, error)
+	VulnBases(ctx context.Context, opts service.VulnBasesOptions) ([]service.VulnBase, error)
+	Impact(ctx context.Context, opts service.ImpactOptions) (*service.Impact, error)
+	Cleanup(ctx context.Context, opts service.CleanupOptions) (*service.Cleanup, error)
+	Lifecycles(ctx context.Context, opts service.LifecycleOptions) ([]service.Lifecycle, error)
 }
 
 // Backend returns the local index, or a remote server when --server is
@@ -204,6 +208,60 @@ func (r *Remote) Summary(ctx context.Context, groupBy string) (*service.Summary,
 		return nil, err
 	}
 	return decode[*service.Summary](res.StatusCode(), res.Body, nil)
+}
+
+// VulnBases fetches the ranking of vulnerable bases.
+func (r *Remote) VulnBases(ctx context.Context, opts service.VulnBasesOptions) ([]service.VulnBase, error) {
+	p := &client.GetVulnBasesParams{GroupBy: ptr(opts.GroupBy), InUseDays: ptr(opts.InUseDays), Limit: ptr(opts.Limit)}
+	if opts.Severity != "" {
+		sev := client.GetVulnBasesParamsSeverity(opts.Severity)
+		p.Severity = &sev
+	}
+	res, err := r.c.GetVulnBasesWithResponse(ctx, p)
+	if err != nil {
+		return nil, err
+	}
+	return decode[[]service.VulnBase](res.StatusCode(), res.Body, nil)
+}
+
+// Impact fetches the blast radius of a base or a vulnerability, with
+// every affected image.
+func (r *Remote) Impact(ctx context.Context, opts service.ImpactOptions) (*service.Impact, error) {
+	all := 1 << 30
+	res, err := r.c.GetVulnImpactWithResponse(ctx, &client.GetVulnImpactParams{
+		Ref: ptr(opts.Ref), Cve: ptr(opts.CVE), Filter: ptr(opts.Filter), GroupBy: ptr(opts.GroupBy), InUseDays: ptr(opts.InUseDays), Limit: &all,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return decode[*service.Impact](res.StatusCode(), res.Body, nil)
+}
+
+// Cleanup fetches the deletion candidates.
+func (r *Remote) Cleanup(ctx context.Context, opts service.CleanupOptions) (*service.Cleanup, error) {
+	p := &client.GetCleanupParams{Where: ptr(opts.Where), Limit: ptr(opts.Limit)}
+	if opts.Scope != "" {
+		sc := client.GetCleanupParamsScope(opts.Scope)
+		p.Scope = &sc
+	}
+	res, err := r.c.GetCleanupWithResponse(ctx, p)
+	if err != nil {
+		return nil, err
+	}
+	return decode[*service.Cleanup](res.StatusCode(), res.Body, nil)
+}
+
+// Lifecycles fetches generated ECR lifecycle policies.
+func (r *Remote) Lifecycles(ctx context.Context, opts service.LifecycleOptions) ([]service.Lifecycle, error) {
+	p := &client.GetLifecyclesParams{Days: ptr(opts.Days), IncludeConflicts: ptr(opts.IncludeConflicts)}
+	if len(opts.Repos) > 0 {
+		p.Repo = &opts.Repos
+	}
+	res, err := r.c.GetLifecyclesWithResponse(ctx, p)
+	if err != nil {
+		return nil, err
+	}
+	return decode[[]service.Lifecycle](res.StatusCode(), res.Body, nil)
 }
 
 // Release calls a Backend close function, keeping the first error.
