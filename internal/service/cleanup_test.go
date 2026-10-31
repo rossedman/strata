@@ -98,7 +98,7 @@ func TestCleanup(t *testing.T) {
 	}
 	// By repo, the big layer is shared across repos, so neither repo
 	// alone frees it.
-	if len(c.Repos) != 2 || c.Repos[0] != (CleanupRepo{Repo: "reg/app/b", Candidates: 1, Size: 1120, Reclaimable: 20}) {
+	if len(c.Repos) != 2 || c.RepoCount != 2 || c.Repos[0] != (CleanupRepo{Repo: "reg/app/b", Candidates: 1, Size: 1120, Reclaimable: 20}) {
 		t.Fatalf("repos = %+v", c.Repos)
 	}
 
@@ -108,7 +108,7 @@ func TestCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.Reclaimable != 1000+10+1000+20+100 || len(r.Candidates) != 1 || r.Candidates[0].Exclusive != 1120 {
+	if r.Reclaimable != 1000+10+1000+20+100 || len(r.Candidates) != 1 || r.Candidates[0].Exclusive != 1120 || len(r.Repos) != 1 || r.RepoCount != 2 {
 		t.Fatalf("repo scope = %+v", r)
 	}
 
