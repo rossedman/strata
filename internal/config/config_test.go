@@ -44,6 +44,11 @@ func TestValidate(t *testing.T) {
 		{Config{DB: "x", Registries: []Registry{{Host: "h", PushedSince: "90d"}}}, false},
 		{Config{DB: "x", Registries: []Registry{{Host: ecrHost, PushedSince: "3parsecs"}}}, false},
 		{Config{DB: "x", Registries: []Registry{{Host: ecrHost, PushedSince: "90d", IncludeRepos: []string{"team-*/**"}, Platforms: []string{"linux/amd64"}}}}, true},
+		{Config{DB: "x", Registries: []Registry{{Host: "us-docker.pkg.dev"}}}, false},
+		{Config{DB: "x", Registries: []Registry{{Host: "us-docker.pkg.dev", Projects: []string{"acme"}, PushedSince: "1y"}}}, true},
+		{Config{DB: "x", Registries: []Registry{{Host: "reg.io", Provider: ProviderGAR, Projects: []string{"acme"}}}}, false},
+		{Config{DB: "x", Registries: []Registry{{Host: "harbor.io", Provider: ProviderHarbor, PushedSince: "30d"}}}, true},
+		{Config{DB: "x", Registries: []Registry{{Host: "acme.azurecr.io", PushedSince: "90d"}}}, true},
 	}
 	for i, tt := range tests {
 		if err := tt.c.Validate(); (err == nil) != tt.ok {
@@ -77,6 +82,21 @@ func TestRegistryProvider(t *testing.T) {
 	for _, tt := range tests {
 		if got := tt.r.UsesECR(); got != tt.want {
 			t.Errorf("%+v: UsesECR = %v", tt.r, got)
+		}
+	}
+	for _, k := range []struct {
+		r    Registry
+		want string
+	}{
+		{Registry{Host: ecrHost}, ProviderECR},
+		{Registry{Host: "europe-west1-docker.pkg.dev"}, ProviderGAR},
+		{Registry{Host: "acme.azurecr.io"}, ProviderACR},
+		{Registry{Host: "harbor.io"}, ProviderDistribution},
+		{Registry{Host: "harbor.io", Provider: ProviderHarbor}, ProviderHarbor},
+		{Registry{Host: "acme.azurecr.io", Provider: ProviderDistribution}, ProviderDistribution},
+	} {
+		if got := k.r.Kind(); got != k.want {
+			t.Errorf("%s/%s: Kind = %s, want %s", k.r.Host, k.r.Provider, got, k.want)
 		}
 	}
 	f, err := Registry{Host: ecrHost, PushedSince: "2w", ExcludeTags: []string{"pr-*"}}.Filter()

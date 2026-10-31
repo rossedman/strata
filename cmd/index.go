@@ -6,12 +6,17 @@ import (
 	"time"
 
 	"github.com/google/go-containerregistry/pkg/authn"
+	"github.com/google/go-containerregistry/pkg/name"
+	"github.com/google/go-containerregistry/pkg/v1/google"
 	"github.com/spf13/cobra"
 
+	"github.com/rossedman/strata/internal/acr"
 	"github.com/rossedman/strata/internal/cli"
 	"github.com/rossedman/strata/internal/config"
 	"github.com/rossedman/strata/internal/crawl"
 	"github.com/rossedman/strata/internal/ecr"
+	"github.com/rossedman/strata/internal/gar"
+	"github.com/rossedman/strata/internal/harbor"
 	"github.com/rossedman/strata/internal/render"
 	"github.com/rossedman/strata/internal/service"
 	"github.com/rossedman/strata/internal/ui"
@@ -34,13 +39,17 @@ before a repo's tags are listed, --include-tag and --exclude-tag before a tag is
 resolved, and --platforms before a platform's manifest is read. Repos and tags a
 filter skips are left as the index last saw them.
 
-ECR registries are listed through the ECR API, with credentials from the AWS
-credential chain. That needs no request per tag, records push and last-pull
-times, and allows --pushed-since.`,
+Registries with their own API are listed through it: ECR (with the AWS
+credential chain), Artifact Registry (*-docker.pkg.dev, with Google
+application default credentials, given --project), ACR (*.azurecr.io) and
+Harbor (--provider harbor). That needs no request per tag, records push times
+(and pull times on ECR and Harbor), and allows --pushed-since.`,
 	Example: `  strata index --registry reg.io --workers 64
   strata index --registry localhost:5000 --insecure --repo payments/api
   strata index --registry reg.io --include-repo 'team-*/**' --exclude-tag 'pr-*' --platforms linux/amd64
   strata index --registry 123456789012.dkr.ecr.us-east-1.amazonaws.com --pushed-since 90d
+  strata index --registry us-docker.pkg.dev --project acme-prod
+  strata index --registry harbor.example.com --provider harbor
   strata index --external docker.io/library/debian:bookworm-slim`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) (err error) {
@@ -51,7 +60,8 @@ times, and allows --pushed-since.`,
 				Workers: v.GetInt("workers"), Rate: v.GetFloat64("rate"), Provider: v.GetString("provider"),
 				IncludeRepos: v.GetStringSlice("include-repo"), ExcludeRepos: v.GetStringSlice("exclude-repo"),
 				IncludeTags: v.GetStringSlice("include-tag"), ExcludeTags: v.GetStringSlice("exclude-tag"),
-				Platforms: v.GetStringSlice("platforms"), PushedSince: v.GetString("pushed-since")}
+				Platforms: v.GetStringSlice("platforms"), PushedSince: v.GetString("pushed-since"),
+				Projects: v.GetStringSlice("project")}
 			if err := r.Check(); err != nil {
 				return err
 			}
@@ -157,15 +167,63 @@ func crawlOptions(ctx context.Context, r config.Registry) (crawl.Options, error)
 		Logger:            state.Logger,
 		Filter:            filter,
 	}
-	if r.Host != "" && r.UsesECR() {
+	if r.Host == "" {
+		return opts, nil
+	}
+	ua := opts.UserAgent
+	switch r.Kind() {
+	case config.ProviderECR:
 		reg, err := newECR(ctx, r.Host)
 		if err != nil {
 			return crawl.Options{}, err
 		}
 		opts.Lister = reg
 		opts.Keychain = authn.NewMultiKeychain(reg, authn.DefaultKeychain)
+	case config.ProviderHarbor:
+		reg, err := harbor.New(r.Host, r.Insecure, authn.DefaultKeychain, nil, ua)
+		if err != nil {
+			return crawl.Options{}, err
+		}
+		opts.Lister = reg
+	case config.ProviderGAR:
+		kc := authn.NewMultiKeychain(google.Keychain, authn.DefaultKeychain)
+		reg, err := gar.New(r.Host, gar.Options{Projects: r.Projects, Token: googleToken(ctx, r.Host), UserAgent: ua})
+		if err != nil {
+			return crawl.Options{}, err
+		}
+		opts.Lister, opts.Keychain = reg, kc
+	case config.ProviderACR:
+		reg, err := acr.New(r.Host, r.Insecure, authn.DefaultKeychain, nil, ua)
+		if err != nil {
+			return crawl.Options{}, err
+		}
+		opts.Lister = reg
 	}
 	return opts, nil
+}
+
+// googleToken returns a function that gets an access token for Google
+// APIs from the same credentials the registry uses: application default
+// credentials or gcloud.
+var googleToken = func(ctx context.Context, host string) func() (string, error) {
+	return func() (string, error) {
+		reg, err := name.NewRegistry(host)
+		if err != nil {
+			return "", err
+		}
+		auth, err := authn.Resolve(ctx, google.Keychain, reg)
+		if err != nil {
+			return "", err
+		}
+		cfg, err := authn.Authorization(ctx, auth)
+		if err != nil {
+			return "", err
+		}
+		if cfg.Password == "" {
+			return "", fmt.Errorf("no Google credentials: run gcloud auth application-default login or set GOOGLE_APPLICATION_CREDENTIALS")
+		}
+		return cfg.Password, nil
+	}
 }
 
 // runIndex runs one index pass under a spinner.
@@ -189,13 +247,14 @@ func init() {
 	f.Bool("insecure", false, "allow plain HTTP")
 	f.StringSlice("external", nil, "external base refs to fetch so roots resolve (repeatable)")
 	f.Bool("referrers", true, "fetch SBOMs, signatures and attestations")
-	f.String("provider", "auto", "how to list the registry: auto, ecr or distribution")
+	f.String("provider", "auto", "how to list the registry: auto, ecr, harbor, gar, acr or distribution")
+	f.StringSlice("project", nil, "Google Cloud projects to list Artifact Registry repositories in (repeatable)")
 	f.StringSlice("include-repo", nil, "crawl only repos matching this glob (repeatable; ** crosses path segments)")
 	f.StringSlice("exclude-repo", nil, "skip repos matching this glob (repeatable)")
 	f.StringSlice("include-tag", nil, "crawl only tags matching this glob (repeatable)")
 	f.StringSlice("exclude-tag", nil, "skip tags matching this glob, such as pr-* (repeatable)")
 	f.StringSlice("platforms", nil, "keep only these platforms of multi-platform images, such as linux/amd64 (repeatable)")
-	f.String("pushed-since", "", "skip images pushed longer ago than this, such as 90d (ECR only)")
+	f.String("pushed-since", "", "skip images pushed longer ago than this, such as 90d (registry APIs only)")
 	f.StringP("output", "o", "text", "output format: text or json")
 	rootCmd.AddCommand(indexCmd)
 }
