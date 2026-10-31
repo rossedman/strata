@@ -30,6 +30,8 @@ type Facts struct {
 	RootRefs    []string
 	// LastPulled is the last pull time, or zero if there is no pull data.
 	LastPulled time.Time
+	// Pushed is when the registry says the image was pushed, or zero.
+	Pushed time.Time
 	// Parent describes the image's preferred parent, if it has one.
 	Parent *ParentFacts
 }
@@ -234,11 +236,19 @@ func (e *Evaluator) Evaluate(f Facts) Result {
 	if r.LastPulledDays != nil && *r.LastPulledDays > th.AbandonedPullDays {
 		unpulled = true
 	}
+	// A registry that reports pulls, such as ECR, reports none for an
+	// image never pulled; once its push is older than the window, it
+	// counts as unpulled.
+	neverPulled := r.LastPulledDays == nil && !f.Pushed.IsZero() && e.days(f.Pushed) > th.AbandonedPullDays
+	unpulled = unpulled || neverPulled
 	switch {
 	case r.Untagged && f.Descendants == 0 && unpulled:
 		r.Verdict = Abandoned
 		why := fmt.Sprintf("untagged, no descendants and no pulls in %d days", th.AbandonedPullDays)
-		if r.LastPulledDays == nil {
+		switch {
+		case neverPulled:
+			why = fmt.Sprintf("untagged, no descendants and never pulled since its push %d days ago", e.days(f.Pushed))
+		case r.LastPulledDays == nil:
 			why = "untagged and no descendants (no pull data)"
 		}
 		r.Reasons = append([]string{why}, r.Reasons...)
@@ -383,7 +393,7 @@ func load(ctx context.Context, db *sql.DB, policy Policy, now time.Time) (*Evalu
 	rows, err := db.QueryContext(ctx, `
 		SELECT v.digest, coalesce(v.index_digest, ''), v.repo, v.created, v.tags, v.descendants,
 			coalesce(v.labels::JSON::VARCHAR, '{}'), v.root_refs,
-			greatest(pl.last_pulled, plx.last_pulled),
+			greatest(pl.last_pulled, plx.last_pulled), v.pushed,
 			coalesce(v.parent, ''), coalesce(p.index_digest, ''), coalesce(p.repo, ''), p.created
 		FROM image_view v LEFT JOIN images p ON p.digest = v.parent
 		LEFT JOIN (SELECT digest, max(last_pulled) AS last_pulled FROM pulls GROUP BY digest) pl ON pl.digest = v.digest
@@ -395,16 +405,16 @@ func load(ctx context.Context, db *sql.DB, policy Policy, now time.Time) (*Evalu
 	var facts []Facts
 	for rows.Next() {
 		var f Facts
-		var created, pulled, parentCreated sql.NullTime
+		var created, pulled, pushed, parentCreated sql.NullTime
 		var labels string
 		var rootRefs []any
 		var parent, parentIndex, parentRepo string
 		if err := rows.Scan(&f.Digest, &f.IndexDigest, &f.Repo, &created, &f.Tags, &f.Descendants,
-			&labels, &rootRefs, &pulled, &parent, &parentIndex, &parentRepo, &parentCreated); err != nil {
+			&labels, &rootRefs, &pulled, &pushed, &parent, &parentIndex, &parentRepo, &parentCreated); err != nil {
 			return nil, nil, fmt.Errorf("scan image facts: %w", err)
 		}
 		f.Created = created.Time
-		f.LastPulled = pulled.Time
+		f.LastPulled, f.Pushed = pulled.Time, pushed.Time
 		f.Labels = map[string]string{}
 		var raw map[string]any
 		if err := json.Unmarshal([]byte(labels), &raw); err == nil {

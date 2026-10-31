@@ -22,7 +22,7 @@ When an image's parent was never tagged during recording, strata approximates dr
 
 | Verdict | When |
 | --- | --- |
-| **abandoned** | untagged, no descendants, and no pulls within `abandoned_pull_days` (with no pull data at all, untagged leaves count as unpulled) |
+| **abandoned** | untagged, no descendants, and no pulls within `abandoned_pull_days` (with no pull data at all, untagged leaves count as unpulled; on a registry that reports pulls, such as ECR, an image never pulled counts as unpulled once its push is older than the window) |
 | **stale** | base drift of `stale_generations` or more, superseded more than `superseded_days` ago, an EOL root, or a label policy match |
 | **drifting** | base drift of at least 1 generation, or superseded within `superseded_days` |
 | **fresh** | none of the above |

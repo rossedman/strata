@@ -112,6 +112,19 @@ func TestEvaluate(t *testing.T) {
 			reason:  "untagged, no descendants and no pulls in 90 days",
 		},
 		{
+			name:    "untagged leaf the registry never saw pulled, pushed long ago",
+			ev:      &Evaluator{Policy: DefaultPolicy(), History: History{}, Now: now, HavePulls: true},
+			facts:   Facts{Digest: self, Pushed: now.AddDate(0, 0, -120)},
+			verdict: Abandoned,
+			reason:  "never pulled since its push 120 days ago",
+		},
+		{
+			name:    "untagged leaf the registry never saw pulled, pushed recently",
+			ev:      &Evaluator{Policy: DefaultPolicy(), History: History{}, Now: now, HavePulls: true},
+			facts:   Facts{Digest: self, Pushed: now.AddDate(0, 0, -10)},
+			verdict: Fresh,
+		},
+		{
 			name:    "phantom parent says nothing about drift",
 			ev:      evaluator(),
 			facts:   Facts{Digest: self, Tags: 1, Parent: &ParentFacts{Digest: "phantom:x", Phantom: true}},
@@ -270,6 +283,42 @@ func TestRecompute(t *testing.T) {
 	}
 	if _, err := Recompute(ctx, s.DB(), DefaultPolicy(), time.Now()); err != nil {
 		t.Fatalf("second recompute: %v", err)
+	}
+}
+
+// TestRecomputeNeverPulled covers ECR's data: pull times for images that
+// were pulled and none for images never pulled, with push times for all.
+func TestRecomputeNeverPulled(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	pulled := fixture.Image("pulled", "reg.io/team/app", "p1")
+	old := fixture.Image("old", "reg.io/team/app", "o1")
+	recent := fixture.Image("recent", "reg.io/team/app", "r1")
+	s := fixture.Open(t, &store.Batch{
+		Images: []*model.Image{pulled, old, recent},
+		Pushes: []model.Push{
+			{Repo: "reg.io/team/app", Digest: pulled.Digest, PushedAt: now.AddDate(0, 0, -200), LastPulled: now.AddDate(0, 0, -2)},
+			{Repo: "reg.io/team/app", Digest: old.Digest, PushedAt: now.AddDate(0, 0, -120)},
+			{Repo: "reg.io/team/app", Digest: recent.Digest, PushedAt: now.AddDate(0, 0, -10)},
+		},
+	})
+	if _, err := lineage.Recompute(ctx, s.DB(), lineage.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Recompute(ctx, s.DB(), DefaultPolicy(), now); err != nil {
+		t.Fatal(err)
+	}
+	for d, want := range map[string]string{pulled.Digest: Fresh, old.Digest: Abandoned, recent.Digest: Fresh} {
+		var got, reasons string
+		if err := s.DB().QueryRow(`SELECT verdict, reasons::JSON::VARCHAR FROM staleness WHERE digest = ?`, d).Scan(&got, &reasons); err != nil {
+			t.Fatal(err)
+		}
+		if got != want {
+			t.Errorf("%s: verdict %s, want %s", d, got, want)
+		}
+		if d == old.Digest && !strings.Contains(reasons, "never pulled since its push 120 days ago") {
+			t.Errorf("old reasons = %s", reasons)
+		}
 	}
 }
 
