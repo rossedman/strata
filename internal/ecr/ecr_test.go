@@ -215,7 +215,7 @@ func mustRepo(t *testing.T, s string) name.Repository {
 // TestNew runs the real SDK client against a stub ECR endpoint.
 func TestNew(t *testing.T) {
 	t.Parallel()
-	if _, err := New(context.Background(), "reg.io"); err == nil {
+	if _, err := New(context.Background(), "reg.io", Credentials{}); err == nil {
 		t.Fatal("a non-ECR host should fail")
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
@@ -245,7 +245,7 @@ func TestNew(t *testing.T) {
 		}
 	}))
 	t.Cleanup(srv.Close)
-	r, err := New(context.Background(), host,
+	r, err := New(context.Background(), host, Credentials{},
 		awsconfig.WithBaseEndpoint(srv.URL),
 		awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider("AKID", "SECRET", "")))
 	if err != nil {
@@ -298,5 +298,50 @@ func TestManifests(t *testing.T) {
 	api.err = errors.New("AccessDenied")
 	if _, err := r.Manifests(context.Background(), "payments/api", []string{missing}); err == nil || !strings.Contains(err.Error(), "batch get images in payments/api") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+// TestNewWithCredentials assumes a role, with an external ID, before
+// calling ECR with the role's credentials, against stub STS and ECR
+// endpoints.
+func TestNewWithCredentials(t *testing.T) {
+	t.Parallel()
+	var assumed, signed string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.Header.Get("X-Amz-Target") == "" {
+			// STS speaks the query protocol.
+			_ = req.ParseForm()
+			assumed = req.Form.Get("Action") + " " + req.Form.Get("RoleArn") + " " + req.Form.Get("ExternalId") + " " + req.Form.Get("RoleSessionName")
+			w.Header().Set("Content-Type", "text/xml")
+			_, _ = w.Write([]byte(`<AssumeRoleResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/"><AssumeRoleResult><Credentials>
+				<AccessKeyId>ASIAROLE</AccessKeyId><SecretAccessKey>s</SecretAccessKey><SessionToken>tok</SessionToken>
+				<Expiration>2099-01-01T00:00:00Z</Expiration></Credentials><AssumedRoleUser><Arn>arn:aws:sts::111111111111:assumed-role/r/strata</Arn>
+				<AssumedRoleId>id</AssumedRoleId></AssumedRoleUser></AssumeRoleResult></AssumeRoleResponse>`))
+			return
+		}
+		signed = req.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/x-amz-json-1.1")
+		_ = json.NewEncoder(w).Encode(map[string]any{"repositories": []map[string]any{{"repositoryName": "base/node"}}})
+	}))
+	t.Cleanup(srv.Close)
+	r, err := New(context.Background(), host, Credentials{RoleARN: "arn:aws:iam::111111111111:role/strata-read", ExternalID: "ext"},
+		awsconfig.WithBaseEndpoint(srv.URL),
+		awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider("AKIDBASE", "SECRET", "")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repos, err := r.Repos(context.Background())
+	if err != nil || len(repos) != 1 {
+		t.Fatalf("repos = %v, %v", repos, err)
+	}
+	if assumed != "AssumeRole arn:aws:iam::111111111111:role/strata-read ext strata" {
+		t.Fatalf("assume role request = %q", assumed)
+	}
+	if !strings.Contains(signed, "Credential=ASIAROLE/") {
+		t.Fatalf("ECR call not signed with the role: %q", signed)
+	}
+	// A profile that does not exist fails up front.
+	if _, err := New(context.Background(), host, Credentials{Profile: "strata-test-missing-profile"}); err == nil {
+		t.Fatal("a missing profile was accepted")
 	}
 }
