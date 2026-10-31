@@ -8,6 +8,7 @@
 package crawl
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -111,6 +112,21 @@ type Lister interface {
 	Images(ctx context.Context, repo string) ([]Listed, error)
 }
 
+// ManifestFetcher is a Lister that can also fetch many manifests in one
+// call, as ECR's BatchGetImage does. The crawl uses it for every manifest
+// it needs in a repo, so only image configs are fetched one by one; a
+// manifest it does not return is fetched the usual way.
+type ManifestFetcher interface {
+	// Manifests returns the raw manifests it found, by digest.
+	Manifests(ctx context.Context, repo string, digests []string) (map[string][]byte, error)
+}
+
+// CallCounter is a Lister that counts its API calls, so they show in the
+// crawl's request totals.
+type CallCounter interface {
+	Calls() int64
+}
+
 // Listed is one manifest a Lister reports.
 type Listed struct {
 	Digest    string
@@ -141,6 +157,9 @@ type crawler struct {
 	configs sync.Map
 	// w merges repo batches into large writes.
 	w *writer
+	// prefetched holds manifests a ManifestFetcher returned, by digest,
+	// until the crawl reads them.
+	prefetched sync.Map
 }
 
 // Crawl indexes a registry. A crawl that stops part way is resumed by the
@@ -176,6 +195,10 @@ func Crawl(ctx context.Context, st *store.Store, opts Options) (Stats, error) {
 		return Stats{}, fmt.Errorf("pushed-since needs a registry that reports push times, such as ECR")
 	}
 	c := &crawler{opts: opts, st: st, red: red, match: match, sem: make(chan struct{}, opts.Workers)}
+	var listerCalls int64
+	if cc, ok := opts.Lister.(CallCounter); ok {
+		listerCalls = cc.Calls()
+	}
 	base := opts.Transport
 	if base == nil {
 		base = remote.DefaultTransport
@@ -210,6 +233,9 @@ func Crawl(ctx context.Context, st *store.Store, opts Options) (Stats, error) {
 		if err := c.crawlExternal(ctx, ref); err != nil {
 			return c.stats, err
 		}
+	}
+	if cc, ok := opts.Lister.(CallCounter); ok {
+		atomic.AddInt64(&c.stats.Requests, cc.Calls()-listerCalls)
 	}
 	opts.Logger.Info("crawl finished", "registry", opts.Registry, "new_images", c.stats.Images,
 		"requests", c.stats.Requests, "requests_per_image", fmt.Sprintf("%.1f", c.stats.RequestsPerImage()),
@@ -367,6 +393,19 @@ func (c *crawler) crawlRepo(ctx context.Context, repo name.Repository) error {
 	if err != nil {
 		return err
 	}
+	if mf, ok := c.opts.Lister.(ManifestFetcher); ok && listed != nil {
+		fetched, err := c.prefetch(ctx, mf, repo, tags, listed, known, now)
+		// Manifests the crawl did not read, such as those of tags that
+		// vanished, are dropped with the repo.
+		defer func() {
+			for _, d := range fetched {
+				c.prefetched.Delete(d)
+			}
+		}()
+		if err != nil {
+			return err
+		}
+	}
 	var mu sync.Mutex
 	seenDigest := map[string]bool{}
 	// flush hands a full batch to the writer early, so a large repo is
@@ -473,6 +512,82 @@ func (c *crawler) listImages(ctx context.Context, repo name.Repository, batch *s
 	return tags, byTag, nil
 }
 
+// prefetchBatch is how many manifests one ManifestFetcher call asks for;
+// ECR's BatchGetImage takes up to 100.
+const prefetchBatch = 100
+
+// prefetch fetches, in batches, every manifest the crawl of a repo will
+// need: the new ones its kept tags point at, then the platform images of
+// the new multi-platform indexes among them. It returns the digests it
+// asked for.
+func (c *crawler) prefetch(ctx context.Context, mf ManifestFetcher, repo name.Repository, tags []string, listed map[string]*Listed, known map[string]bool, now time.Time) ([]string, error) {
+	seen := map[string]bool{}
+	var want, indexes []string
+	for _, tag := range tags {
+		l := listed[tag]
+		if !c.match.tag(tag) || seen[l.Digest] || known[l.Digest] || !c.match.pushed(l.PushedAt, now) {
+			continue
+		}
+		if _, ok := cosignReferrer(tag, l.Digest); ok {
+			continue
+		}
+		seen[l.Digest] = true
+		want = append(want, l.Digest)
+		if types.MediaType(l.MediaType).IsIndex() {
+			indexes = append(indexes, l.Digest)
+		}
+	}
+	if err := c.fetchBatches(ctx, mf, repo, want); err != nil {
+		return want, err
+	}
+	var children []string
+	for _, d := range indexes {
+		b, ok := c.prefetched.Load(d)
+		if !ok {
+			continue
+		}
+		im, err := v1.ParseIndexManifest(bytes.NewReader(b.([]byte)))
+		if err != nil {
+			continue // read again, and reported, when the tag is crawled
+		}
+		for _, m := range im.Manifests {
+			cd := m.Digest.String()
+			if !m.MediaType.IsImage() || isAttestationManifest(m) || seen[cd] || known[cd] {
+				continue
+			}
+			if m.Platform != nil && !c.match.platform(model.Platform{OS: m.Platform.OS, Arch: m.Platform.Architecture, Variant: m.Platform.Variant}) {
+				continue
+			}
+			seen[cd] = true
+			children = append(children, cd)
+		}
+	}
+	return append(want, children...), c.fetchBatches(ctx, mf, repo, children)
+}
+
+// fetchBatches asks mf for digests in batches, a few at a time, and keeps
+// what it returns for the crawl to read.
+func (c *crawler) fetchBatches(ctx context.Context, mf ManifestFetcher, repo name.Repository, digests []string) error {
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(4)
+	for start := 0; start < len(digests); start += prefetchBatch {
+		batch := digests[start:min(start+prefetchBatch, len(digests))]
+		g.Go(func() error {
+			c.acquire(gctx)
+			got, err := mf.Manifests(gctx, repo.RepositoryStr(), batch)
+			c.release()
+			if err != nil {
+				return fmt.Errorf("fetch manifests: %w", err)
+			}
+			for d, b := range got {
+				c.prefetched.Store(d, b)
+			}
+			return nil
+		})
+	}
+	return g.Wait()
+}
+
 // listTags lists a repo's tags, sorted.
 func (c *crawler) listTags(ctx context.Context, repo name.Repository) ([]string, error) {
 	c.acquire(ctx)
@@ -546,13 +661,7 @@ func (c *crawler) resolve(ctx context.Context, ref name.Tag, listed *Listed) (*v
 func (c *crawler) fetch(ctx context.Context, repo name.Repository, digest v1.Hash, mt types.MediaType, res *tagResult) error {
 	ref := repo.Digest(digest.String())
 	if mt.IsIndex() {
-		c.acquire(ctx)
-		idx, err := remote.Index(ref, c.remote...)
-		var im *v1.IndexManifest
-		if err == nil {
-			im, err = idx.IndexManifest()
-		}
-		c.release()
+		im, err := c.indexManifest(ctx, ref)
 		if err != nil {
 			return fmt.Errorf("read index %s: %w", ref, err)
 		}
@@ -604,33 +713,69 @@ func isAttestationManifest(d v1.Descriptor) bool {
 // artifacts that are not runnable images.
 func (c *crawler) image(ctx context.Context, repo name.Repository, digest v1.Hash) (*model.Image, error) {
 	ref := repo.Digest(digest.String())
-	c.acquire(ctx)
-	img, err := remote.Image(ref, c.remote...)
-	var m *v1.Manifest
-	if err == nil {
-		m, err = img.Manifest()
-	}
-	c.release()
+	m, err := c.manifest(ctx, ref)
 	if err != nil {
 		return nil, fmt.Errorf("read manifest %s: %w", ref, err)
 	}
 	if !isImageConfig(string(m.Config.MediaType)) {
 		return nil, nil
 	}
-	cfg, err := c.config(ctx, img, m.Config.Digest)
+	cfg, err := c.config(ctx, repo, m.Config.Digest)
 	if err != nil {
 		return nil, fmt.Errorf("read config %s: %w", m.Config.Digest, err)
 	}
 	return toImage(digest.String(), RepoName(repo), m, cfg, c.opts.EnvAllowlist, c.red)
 }
 
-// config returns an image's config, fetching each digest once per crawl.
-func (c *crawler) config(ctx context.Context, img v1.Image, digest v1.Hash) (*v1.ConfigFile, error) {
+// manifest returns an image manifest, from the prefetched ones when it is
+// there, else from the registry.
+func (c *crawler) manifest(ctx context.Context, ref name.Digest) (*v1.Manifest, error) {
+	if b, ok := c.prefetched.LoadAndDelete(ref.DigestStr()); ok {
+		return v1.ParseManifest(bytes.NewReader(b.([]byte)))
+	}
+	c.acquire(ctx)
+	defer c.release()
+	desc, err := remote.Get(ref, c.remote...)
+	if err != nil {
+		return nil, err
+	}
+	return v1.ParseManifest(bytes.NewReader(desc.Manifest))
+}
+
+// indexManifest returns a multi-platform index, from the prefetched ones
+// when it is there, else from the registry.
+func (c *crawler) indexManifest(ctx context.Context, ref name.Digest) (*v1.IndexManifest, error) {
+	if b, ok := c.prefetched.LoadAndDelete(ref.DigestStr()); ok {
+		return v1.ParseIndexManifest(bytes.NewReader(b.([]byte)))
+	}
+	c.acquire(ctx)
+	defer c.release()
+	desc, err := remote.Get(ref, c.remote...)
+	if err != nil {
+		return nil, err
+	}
+	return v1.ParseIndexManifest(bytes.NewReader(desc.Manifest))
+}
+
+// config returns an image config, fetching each digest once per crawl as
+// a plain blob.
+func (c *crawler) config(ctx context.Context, repo name.Repository, digest v1.Hash) (*v1.ConfigFile, error) {
 	if v, ok := c.configs.Load(digest); ok {
 		return v.(*v1.ConfigFile), nil
 	}
 	c.acquire(ctx)
-	cfg, err := img.ConfigFile()
+	cfg, err := func() (*v1.ConfigFile, error) {
+		l, err := remote.Layer(repo.Digest(digest.String()), c.remote...)
+		if err != nil {
+			return nil, err
+		}
+		rc, err := l.Compressed()
+		if err != nil {
+			return nil, err
+		}
+		defer func() { _ = rc.Close() }()
+		return v1.ParseConfigFile(rc)
+	}()
 	c.release()
 	if err != nil {
 		return nil, err

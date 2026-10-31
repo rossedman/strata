@@ -50,7 +50,7 @@ These numbers come from the benchmarks in the repository, run on a 4-vCPU machin
 | What | Measured |
 | --- | --- |
 | First crawl, synthetic registry, 2 ms per request | about 400 images/s with 4 workers, 850 with 16 to 64 |
-| Requests per new image | 3.3 (2.4 through the ECR API) |
+| Requests per new image | 3.3; through the ECR API, 1.4 including the API calls |
 | Re-crawl | 1.3 requests per tag; through the ECR API, about one call per 1,000 images |
 | First (full) refresh | 28 s at 200,000 images |
 | Refresh after a re-crawl with no changes | 5 s at 200,000 images |
@@ -120,6 +120,7 @@ Lineage follows whatever is indexed. If a filter skips a base image, its childre
 strata lists ECR registries (`<account>.dkr.ecr.<region>.amazonaws.com`) through the ECR API instead of the registry protocol:
 
 - One `DescribeImages` page returns up to 1,000 manifests with their tags, so tags need no `HEAD` requests. A re-crawl of 2 million images is about 2,000 API calls.
+- `BatchGetImage` returns up to 100 manifests per call, so the only request left per new image is its config download. Manifests ECR doesn't return, or whose content doesn't match their digest, are fetched one by one instead.
 - The listing includes when each image was pushed and last pulled. Push times are queryable as `pushed` and `pushed_age`, and appear as a **Pushed** facet in the web UI.
 - The last-pull time feeds the staleness engine's pull signal (`stale.last_pulled`), with no pull data to import. ECR updates it about once a day.
 - Artifacts attached to an image, such as SBOMs and signatures, come with the listing, so there are no referrers requests.

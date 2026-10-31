@@ -1,18 +1,22 @@
 // Package ecr lists Amazon ECR registries through the ECR API instead of
 // the distribution API. One DescribeImages page covers up to 1,000
 // manifests with their tags, push time and last pull time, so a re-crawl
-// costs one call per thousand images rather than one request per tag. It
-// also signs registry requests with the AWS credential chain, so no
-// Docker credential helper is needed.
+// costs one call per thousand images rather than one request per tag, and
+// BatchGetImage fetches up to 100 manifests per call, so a first crawl
+// fetches only image configs one by one. It also signs registry requests
+// with the AWS credential chain, so no Docker credential helper is needed.
 package ecr
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -41,6 +45,7 @@ func ParseHost(host string) (account, region string, ok bool) {
 type API interface {
 	ecr.DescribeRepositoriesAPIClient
 	ecr.DescribeImagesAPIClient
+	BatchGetImage(ctx context.Context, in *ecr.BatchGetImageInput, opts ...func(*ecr.Options)) (*ecr.BatchGetImageOutput, error)
 	GetAuthorizationToken(ctx context.Context, in *ecr.GetAuthorizationTokenInput, opts ...func(*ecr.Options)) (*ecr.GetAuthorizationTokenOutput, error)
 }
 
@@ -58,6 +63,55 @@ type Registry struct {
 	mu      sync.Mutex
 	auth    authn.AuthConfig
 	expires time.Time
+
+	// calls counts ECR API calls, for the crawl's request totals.
+	calls atomic.Int64
+}
+
+// Calls returns how many ECR API calls the client has made.
+func (r *Registry) Calls() int64 { return r.calls.Load() }
+
+// manifestTypes are the manifest media types BatchGetImage may return.
+// Naming them all keeps ECR from converting a manifest to another type,
+// which would change its digest.
+var manifestTypes = []string{
+	"application/vnd.oci.image.manifest.v1+json",
+	"application/vnd.oci.image.index.v1+json",
+	"application/vnd.docker.distribution.manifest.v2+json",
+	"application/vnd.docker.distribution.manifest.list.v2+json",
+}
+
+// Manifests fetches the manifests of digests in one BatchGetImage call;
+// ECR takes up to 100 per call. A manifest whose bytes do not hash to the
+// digest asked for, or that ECR could not return, is left out, and the
+// crawl fetches it the usual way.
+func (r *Registry) Manifests(ctx context.Context, repo string, digests []string) (map[string][]byte, error) {
+	ids := make([]types.ImageIdentifier, len(digests))
+	for i, d := range digests {
+		ids[i] = types.ImageIdentifier{ImageDigest: aws.String(d)}
+	}
+	r.calls.Add(1)
+	out, err := r.api.BatchGetImage(ctx, &ecr.BatchGetImageInput{
+		RegistryId:         aws.String(r.account),
+		RepositoryName:     aws.String(repo),
+		ImageIds:           ids,
+		AcceptedMediaTypes: manifestTypes,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("batch get images in %s: %w", repo, err)
+	}
+	got := map[string][]byte{}
+	for _, img := range out.Images {
+		if img.ImageId == nil || img.ImageManifest == nil {
+			continue
+		}
+		d, b := aws.ToString(img.ImageId.ImageDigest), []byte(aws.ToString(img.ImageManifest))
+		if sum := sha256.Sum256(b); "sha256:"+hex.EncodeToString(sum[:]) != d {
+			continue
+		}
+		got[d] = b
+	}
+	return got, nil
 }
 
 // New returns a client for an ECR registry host, using the default AWS
@@ -89,6 +143,7 @@ func (r *Registry) Repos(ctx context.Context) ([]string, error) {
 	})
 	var out []string
 	for p.HasMorePages() {
+		r.calls.Add(1)
 		page, err := p.NextPage(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("describe repositories: %w", err)
@@ -110,6 +165,7 @@ func (r *Registry) Images(ctx context.Context, repo string) ([]crawl.Listed, err
 	})
 	var out []crawl.Listed
 	for p.HasMorePages() {
+		r.calls.Add(1)
 		page, err := p.NextPage(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("describe images in %s: %w", repo, err)
