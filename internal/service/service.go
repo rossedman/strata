@@ -103,7 +103,7 @@ type IndexResult struct {
 func (s *Service) Index(ctx context.Context, opts crawl.Options) (res IndexResult, err error) {
 	start := s.Now()
 	s.update(func(st *IndexStatus) {
-		*st = IndexStatus{Running: true, Registry: opts.Registry, StartedAt: &start, RefreshedAt: st.RefreshedAt}
+		*st = IndexStatus{Running: true, Registry: opts.Registry, StartedAt: &start, RefreshedAt: st.RefreshedAt, RefreshError: st.RefreshError}
 	})
 	defer func() {
 		end := s.Now()
@@ -153,6 +153,9 @@ func (s *Service) Refresh(ctx context.Context) error {
 	s.update(func(st *IndexStatus) { st.Refreshing = true })
 	defer s.update(func(st *IndexStatus) { st.Refreshing = false })
 	if err := s.refresh(ctx); err != nil {
+		if ctx.Err() == nil {
+			s.update(func(st *IndexStatus) { st.RefreshError = err.Error() })
+		}
 		return err
 	}
 	now := s.Now().UTC()
@@ -161,7 +164,7 @@ func (s *Service) Refresh(ctx context.Context) error {
 	if err := s.Store.SetMeta(context.WithoutCancel(ctx), "refreshed_at", now.Format(time.RFC3339Nano)); err != nil {
 		return err
 	}
-	s.update(func(st *IndexStatus) { st.RefreshedAt = &now })
+	s.update(func(st *IndexStatus) { st.RefreshedAt, st.RefreshError = &now, "" })
 	return nil
 }
 

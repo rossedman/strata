@@ -35,8 +35,8 @@ type CleanupOptions struct {
 	Where string
 	// Scope is ScopeRegistry (the default) or ScopeRepo.
 	Scope string
-	// Limit caps the candidates listed; totals count them all. Zero
-	// lists them all.
+	// Limit caps the candidates and the repos listed; totals count them
+	// all. Zero lists them all.
 	Limit int
 }
 
@@ -74,7 +74,10 @@ type Cleanup struct {
 	Scope string `json:"scope"`
 	// Candidates are ordered by exclusive bytes, largest first.
 	Candidates []CleanupCandidate `json:"candidates"`
-	Repos      []CleanupRepo      `json:"repos"`
+	// Repos are ordered by reclaimable bytes; RepoCount counts every repo
+	// with candidates.
+	Repos     []CleanupRepo `json:"repos"`
+	RepoCount int           `json:"repo_count"`
 	// Total counts candidates; Images counts their platform images.
 	Total  int `json:"total"`
 	Images int `json:"images"`
@@ -111,6 +114,15 @@ func nullInt(n sql.NullInt64) *int {
 	}
 	v := int(n.Int64)
 	return &v
+}
+
+// limitArg returns n as a LIMIT argument, or NULL, which DuckDB reads as
+// no limit, when n is zero.
+func limitArg(n int) any {
+	if n <= 0 {
+		return nil
+	}
+	return n
 }
 
 // cleanupScope returns the partition a layer is shared within.
@@ -258,15 +270,16 @@ func (s *Service) Cleanup(ctx context.Context, opts CleanupOptions) (*Cleanup, e
 			FROM cleanup_layers l, unnest(l.units) AS u(unit) JOIN cleanup_cand c ON c.unit = u.unit
 			WHERE NOT l.kept GROUP BY l.part, l.blob HAVING count(DISTINCT c.repo) = 1
 		)
-		SELECT p.repo, p.candidates, p.size, coalesce((SELECT sum(size) FROM freed f WHERE f.repo = p.repo), 0) AS bytes
-		FROM per p ORDER BY bytes DESC, p.repo`)
+		SELECT p.repo, p.candidates, p.size, coalesce(f.bytes, 0) AS bytes, count(*) OVER ()
+		FROM per p LEFT JOIN (SELECT repo, sum(size) AS bytes FROM freed GROUP BY repo) f ON f.repo = p.repo
+		ORDER BY bytes DESC, p.repo LIMIT ?`, limitArg(opts.Limit))
 	if err != nil {
 		return nil, fmt.Errorf("total cleanup by repo: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var r CleanupRepo
-		if err := rows.Scan(&r.Repo, &r.Candidates, &r.Size, &r.Reclaimable); err != nil {
+		if err := rows.Scan(&r.Repo, &r.Candidates, &r.Size, &r.Reclaimable, &out.RepoCount); err != nil {
 			return nil, err
 		}
 		out.Repos = append(out.Repos, r)

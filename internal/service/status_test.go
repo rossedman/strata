@@ -126,3 +126,30 @@ func TestFirstRefreshComesEarly(t *testing.T) {
 		t.Fatalf("refreshed_at after reopening = %v, want %v", again.RefreshedAt, st.RefreshedAt)
 	}
 }
+
+func TestRefreshErrorIsReported(t *testing.T) {
+	t.Parallel()
+	svc := New(fixture.Open(t, fixture.Org(40)))
+	var create string
+	if err := svc.db().QueryRow(`SELECT sql FROM duckdb_tables() WHERE table_name = 'staleness'`).Scan(&create); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.db().Exec(`DROP TABLE staleness`); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Refresh(ctx); err == nil {
+		t.Fatal("refresh without a staleness table succeeded")
+	}
+	if st := svc.Status(); st.RefreshError == "" || st.Refreshing || st.RefreshedAt != nil {
+		t.Fatalf("status after a failed refresh = %+v", st)
+	}
+	if _, err := svc.db().Exec(create); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Refresh(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if st := svc.Status(); st.RefreshError != "" || st.RefreshedAt == nil {
+		t.Fatalf("status after a good refresh = %+v", st)
+	}
+}
