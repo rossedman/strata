@@ -14,6 +14,7 @@ strata v0.1 implements the core of the design: indexing, lineage, staleness, the
 - `strata serve`: an OpenAPI-generated JSON API, MCP over HTTP, scheduled re-crawls, trusted-header auth, CLI routing
 - `strata mcp` over stdio
 - A web UI served by `strata serve` and `strata ui`: an overview, a lineage outline that loads one level at a time, search with facet counts, and an image page, backed by per-subtree counts and a materialized image table so it stays fast at millions of images
+- Cleanup recommendations with reclaimable storage after shared layers, and generated ECR lifecycle policies checked against the index
 
 ## Next
 

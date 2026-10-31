@@ -15,13 +15,15 @@ strata indexes a container registry into one local DuckDB file and answers three
 - **Where did it come from?** Its ancestry back to the root base, with parents found from exact layer-prefix matches and confirmed by OCI base annotations or labels.
 - **Is it stale?** An explainable verdict, fresh, drifting, stale or abandoned, built from base drift, supersession, tag status and policy, with the reasons spelled out.
 
+From the same index it lists images safe to delete with the storage that frees after shared layers, plus ECR lifecycle policies to match ([Cleanup](https://rossedman.io/strata/guides/cleanup/)).
+
 It needs registry read access and nothing else: no source repos, no CI, no database server. It reads manifests and configs and never pulls a layer blob.
 
 ## Three ways in
 
 The web UI, the CLI and the MCP server all answer from the same index, so they give the same answers.
 
-**Web UI.** `strata ui` opens it on your own index; `strata serve` shares it with a team behind your auth proxy. Overview, lineage, search and image pages, built into the binary and fast at millions of images. Every view is a URL you can paste into a ticket, and each shows the command that reproduces it.
+**Web UI.** `strata ui` opens it on your own index; `strata serve` shares it with a team behind your auth proxy. Overview, lineage, search, cleanup and image pages, built into the binary and fast at millions of images. Every view is a URL you can paste into a ticket, and each shows the command that reproduces it.
 
 <p align="center"><img src="docs/assets/ui-overview.webp" alt="The strata web UI Overview: image and repo totals, the staleness mix, the root bases holding the stale images, and a registry map"></p>
 
@@ -35,7 +37,7 @@ The web UI, the CLI and the MCP server all answer from the same index, so they g
 
 **CLI.** Tables and trees in a terminal; JSON, CSV or NDJSON for scripts and CI; Mermaid, DOT, SVG or an offline HTML explorer for graphs.
 
-**MCP.** Six read-only tools (`explain`, `ancestry`, `descendants`, `query`, `stale` and `roots`) for agents. The query tool teaches the filter language, so an agent can answer "which payments images are drifting?" by writing its own filter.
+**MCP.** Seven read-only tools (`explain`, `ancestry`, `descendants`, `query`, `stale`, `roots` and `cleanup`) for agents. The query tool teaches the filter language, so an agent can answer "which payments images are drifting?" by writing its own filter.
 
 ```sh
 claude mcp add strata -- strata mcp

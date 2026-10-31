@@ -153,6 +153,15 @@ func TestIndexAndReports(t *testing.T) {
 	contains(t, mustRun(t, "map", "--db", db), "registry map")
 	contains(t, mustRun(t, "map", "--db", db, "-o", "json"), `"kind": "map"`)
 
+	contains(t, mustRun(t, "cleanup", "--db", db), "cleanup", "candidates", "reclaimable")
+	contains(t, mustRun(t, "cleanup", "--db", db, "--where", "descendants = 0", "--limit", "1"), "largest 1 of 2 listed", "exclusive_bytes", "payments")
+	contains(t, mustRun(t, "cleanup", "--db", db, "--where", `repo ~ "*/base/*"`), "held: kept images are built on them")
+	contains(t, mustRun(t, "cleanup", "--db", db, "--where", "descendants = 0", "--scope", "repo", "-o", "csv"), "repo,digest,images,size,exclusive_bytes")
+	contains(t, mustRun(t, "cleanup", "--db", db, "-o", "json"), `"reclaimable_bytes"`)
+	contains(t, mustRun(t, "cleanup", "lifecycle", "--db", db), "would_expire", "policy")
+	contains(t, mustRun(t, "cleanup", "lifecycle", "--db", db, "--days", "1", "-o", "json"), `"conflicts"`)
+	contains(t, mustRun(t, "cleanup", "lifecycle", "--db", db, "--days", "1", "--include-conflicts", "-o", "script"), "aws ecr put-lifecycle-policy --repository-name payments/api", `"countNumber":1`)
+
 	parquet := filepath.Join(t.TempDir(), "history.parquet")
 	contains(t, mustRun(t, "history", "export", "--db", db, parquet), "exported")
 	contains(t, mustRun(t, "history", "import", "--db", filepath.Join(t.TempDir(), "other.duckdb"), parquet), "imported")
@@ -161,6 +170,22 @@ func TestIndexAndReports(t *testing.T) {
 	contains(t, mustRun(t, "version", "-o", "json"), `"index_format": 1`)
 	contains(t, mustRun(t, "--help"), "strata index --registry reg.io")
 	contains(t, mustRun(t, "query", "--help"), "has:sbom", "ancestor")
+}
+
+func TestLifecycleScript(t *testing.T) {
+	t.Parallel()
+	var b bytes.Buffer
+	pol := &service.LifecyclePolicy{Rules: []service.LifecycleRule{{RulePriority: 1, Action: service.LifecycleAction{Type: "expire"}}}}
+	err := lifecycleScript(&b, []service.Lifecycle{
+		{Repo: "123456789012.dkr.ecr.eu-west-1.amazonaws.com/team/app", Name: "team/app", Expires: 3, Policy: pol},
+		{Repo: "reg.io/base/os", Name: "base/os", Skipped: "would expire 1 image(s) strata keeps"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	contains(t, b.String(), "set -eu",
+		"aws ecr put-lifecycle-policy --registry-id 123456789012 --region eu-west-1 --repository-name team/app --lifecycle-policy-text '{\"rules\"",
+		"# reg.io/base/os: skipped, would expire 1 image(s) strata keeps")
 }
 
 func TestCommandErrors(t *testing.T) {
@@ -198,6 +223,10 @@ func TestCommandErrors(t *testing.T) {
 		{"diff", "--db", db, "-o", "csv"},
 		{"diff", "--db", filepath.Join(t.TempDir(), "empty.duckdb")},
 		{"trend", "--db", db, "nope"},
+		{"cleanup", "--db", db, "-o", "xml"},
+		{"cleanup", "--db", db, "--scope", "galaxy"},
+		{"cleanup", "lifecycle", "--db", db, "-o", "csv"},
+		{"cleanup", "lifecycle", "--db", db, "--repo", "["},
 		{"trend", "--db", db, "manifests", "-o", "svg"},
 		{"map", "--db", db, "-o", "svg"},
 		{"history", "import", "--db", db, "/nope.parquet"},

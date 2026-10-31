@@ -45,6 +45,13 @@ type StaleInput struct {
 	GroupBy string `json:"group_by,omitempty" jsonschema:"group by repo, root or a field such as label.team"`
 }
 
+// CleanupInput asks which images can be deleted.
+type CleanupInput struct {
+	Where string `json:"where,omitempty" jsonschema:"select candidates with the query language; default stale = \"abandoned\""`
+	Scope string `json:"scope,omitempty" jsonschema:"registry (default) counts a layer as freed when no kept image anywhere uses it; repo when none in the same repo does"`
+	Limit int    `json:"limit,omitempty" jsonschema:"most candidates to list, largest first (default 50); totals count them all"`
+}
+
 // TableOutput is a tabular answer.
 type TableOutput struct {
 	Columns []string `json:"columns"`
@@ -74,7 +81,7 @@ config.env_keys, config.workdir, config.healthcheck, label.<key>, missing:<key>.
 Example: label.env = "prod" and stale.eol_base`
 
 // New returns an MCP server with tools for explain, ancestry,
-// descendants, query, stale and roots.
+// descendants, query, stale, roots and cleanup.
 func New(svc *service.Service, version string) *mcp.Server {
 	s := mcp.NewServer(&mcp.Implementation{Name: "strata", Version: version}, nil)
 	ro := &mcp.ToolAnnotations{ReadOnlyHint: true}
@@ -125,6 +132,16 @@ func New(svc *service.Service, version string) *mcp.Server {
 				roots = []service.Root{}
 			}
 			return nil, RootsOutput{Roots: roots}, err
+		})
+	mcp.AddTool(s, &mcp.Tool{Name: "cleanup", Annotations: ro,
+		Description: "Deletion candidates (abandoned images by default, whole multi-platform indexes only, never a base a kept image is built on) and the storage deleting them frees, counting layers shared with kept images as not freed. Nothing is deleted."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in CleanupInput) (*mcp.CallToolResult, *service.Cleanup, error) {
+			limit := in.Limit
+			if limit <= 0 {
+				limit = 50
+			}
+			c, err := svc.Cleanup(ctx, service.CleanupOptions{Where: in.Where, Scope: in.Scope, Limit: limit})
+			return nil, c, err
 		})
 	return s
 }

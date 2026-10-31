@@ -61,6 +61,24 @@ func (e BaseVersionSource) Valid() bool {
 	}
 }
 
+// Defines values for CleanupScope.
+const (
+	CleanupScopeRegistry CleanupScope = "registry"
+	CleanupScopeRepo     CleanupScope = "repo"
+)
+
+// Valid indicates whether the value is a known member of the CleanupScope enum.
+func (e CleanupScope) Valid() bool {
+	switch e {
+	case CleanupScopeRegistry:
+		return true
+	case CleanupScopeRepo:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for EdgeConfidence.
 const (
 	EdgeConfidenceDeclared EdgeConfidence = "declared"
@@ -274,6 +292,42 @@ func (e Verdict) Valid() bool {
 	}
 }
 
+// Defines values for GetCleanupParamsScope.
+const (
+	GetCleanupParamsScopeRegistry GetCleanupParamsScope = "registry"
+	GetCleanupParamsScopeRepo     GetCleanupParamsScope = "repo"
+)
+
+// Valid indicates whether the value is a known member of the GetCleanupParamsScope enum.
+func (e GetCleanupParamsScope) Valid() bool {
+	switch e {
+	case GetCleanupParamsScopeRegistry:
+		return true
+	case GetCleanupParamsScopeRepo:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GetCleanupParamsFormat.
+const (
+	Csv  GetCleanupParamsFormat = "csv"
+	Json GetCleanupParamsFormat = "json"
+)
+
+// Valid indicates whether the value is a known member of the GetCleanupParamsFormat enum.
+func (e GetCleanupParamsFormat) Valid() bool {
+	switch e {
+	case Csv:
+		return true
+	case Json:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for SearchParamsAge.
 const (
 	SearchParamsAgeGreaterThan1Year SearchParamsAge = "> 1 year"
@@ -352,6 +406,55 @@ type Change struct {
 	Kind   string  `json:"kind"`
 	Metric *string `json:"metric,omitempty"`
 	To     float32 `json:"to"`
+}
+
+// Cleanup Deletion candidates and what deleting them frees
+type Cleanup struct {
+	Candidates []CleanupCandidate `json:"candidates"`
+
+	// Held Matching images kept because kept images are built on them or share their index
+	Held int `json:"held"`
+
+	// Images Platform images in the candidates
+	Images int `json:"images"`
+
+	// ReclaimableBytes Layers freed, each once, none a kept image uses
+	ReclaimableBytes int64         `json:"reclaimable_bytes"`
+	Repos            []CleanupRepo `json:"repos"`
+	Scope            CleanupScope  `json:"scope"`
+
+	// Size Sizes the manifests state, a shared layer counted per image
+	Size int64 `json:"size"`
+
+	// Total Candidates: manifests or whole indexes
+	Total int    `json:"total"`
+	Where string `json:"where"`
+}
+
+// CleanupScope defines model for Cleanup.Scope.
+type CleanupScope string
+
+// CleanupCandidate A manifest or index that can be deleted
+type CleanupCandidate struct {
+	Digest string `json:"digest"`
+
+	// ExclusiveBytes Freed by deleting this candidate alone
+	ExclusiveBytes int64  `json:"exclusive_bytes"`
+	Images         int    `json:"images"`
+	LastPulledDays *int   `json:"last_pulled_days"`
+	PushedDays     *int   `json:"pushed_days"`
+	Reason         string `json:"reason"`
+	Repo           string `json:"repo"`
+	Size           int64  `json:"size"`
+	Verdict        string `json:"verdict"`
+}
+
+// CleanupRepo Candidates of one repo
+type CleanupRepo struct {
+	Candidates       int    `json:"candidates"`
+	ReclaimableBytes int64  `json:"reclaimable_bytes"`
+	Repo             string `json:"repo"`
+	Size             int64  `json:"size"`
 }
 
 // ConfigInfo Run-time fields from the image config; environment values are never stored except allowlisted ones
@@ -555,6 +658,44 @@ type LayerInfo struct {
 	Position   int    `json:"position"`
 	SharedBy   int    `json:"shared_by"`
 	Size       int64  `json:"size"`
+}
+
+// Lifecycle A generated ECR lifecycle policy for one repo, checked against the index
+type Lifecycle struct {
+	// Agree Of those, images strata lists for cleanup
+	Agree     int `json:"agree"`
+	Conflicts []struct {
+		Digest string `json:"digest"`
+		Reason string `json:"reason"`
+	} `json:"conflicts"`
+	Days int `json:"days"`
+
+	// Expires Images the rule would expire today
+	Expires int `json:"expires"`
+
+	// Name The repository name ECR uses, without the host
+	Name string `json:"name"`
+
+	// Policy The lifecycle policy document, or null when the repo is skipped
+	Policy *struct {
+		Rules []struct {
+			Action struct {
+				Type string `json:"type"`
+			} `json:"action"`
+			Description  string `json:"description"`
+			RulePriority int    `json:"rulePriority"`
+			Selection    struct {
+				CountNumber int     `json:"countNumber"`
+				CountType   string  `json:"countType"`
+				CountUnit   *string `json:"countUnit,omitempty"`
+				TagStatus   string  `json:"tagStatus"`
+			} `json:"selection"`
+		} `json:"rules"`
+	} `json:"policy"`
+	Repo string `json:"repo"`
+
+	// Skipped Why the repo has no policy
+	Skipped *string `json:"skipped,omitempty"`
 }
 
 // LineageInfo Where an image sits in the lineage graph, with the evidence for its parent
@@ -831,6 +972,39 @@ type GetAncestryParams struct {
 	Platform *Platform `form:"platform,omitempty" json:"platform,omitempty"`
 }
 
+// GetCleanupParams defines parameters for GetCleanup.
+type GetCleanupParams struct {
+	// Where Select candidates with the query language; empty means stale = "abandoned"
+	Where *string `form:"where,omitempty" json:"where,omitempty"`
+
+	// Scope Count a layer as freed when no kept image in the registry, or in the same repo, uses it
+	Scope *GetCleanupParamsScope `form:"scope,omitempty" json:"scope,omitempty"`
+
+	// Limit Most candidates to list, largest first; totals count them all. 0 lists all.
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Format json, or csv to export every candidate
+	Format *GetCleanupParamsFormat `form:"format,omitempty" json:"format,omitempty"`
+}
+
+// GetCleanupParamsScope defines parameters for GetCleanup.
+type GetCleanupParamsScope string
+
+// GetCleanupParamsFormat defines parameters for GetCleanup.
+type GetCleanupParamsFormat string
+
+// GetLifecyclesParams defines parameters for GetLifecycles.
+type GetLifecyclesParams struct {
+	// Repo Only repos matching these globs, with the host
+	Repo *[]string `form:"repo,omitempty" json:"repo,omitempty"`
+
+	// Days Expire untagged images pushed more than this many days ago; 0 uses the policy
+	Days *int `form:"days,omitempty" json:"days,omitempty"`
+
+	// IncludeConflicts Write a repo's rule even when it would expire images strata keeps
+	IncludeConflicts *bool `form:"include_conflicts,omitempty" json:"include_conflicts,omitempty"`
+}
+
 // GetDescendantsParams defines parameters for GetDescendants.
 type GetDescendantsParams struct {
 	// Ref repo:tag, repo@digest, a digest or a digest prefix
@@ -1039,6 +1213,27 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/ancestry (the `GetAncestry` operationId).
 	GetAncestry(ctx context.Context, params *GetAncestryParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetCleanup Images safe to delete and the storage deleting them frees
+	//
+	// Deletion candidates: images matching `where` (abandoned ones by
+	// default), whole multi-platform indexes only, leaving out any a kept
+	// image is built on. `reclaimable_bytes` counts each layer once and
+	// only when no kept image uses it. `format=csv` exports every
+	// candidate.
+	//
+	// Corresponds with GET /v1/cleanup (the `GetCleanup` operationId).
+	GetCleanup(ctx context.Context, params *GetCleanupParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetLifecycles ECR lifecycle policies that expire what strata calls abandoned
+	//
+	// One policy per repo expiring untagged images pushed more than the
+	// staleness policy's abandoned window ago, checked against the index.
+	// A repo where the rule would expire an image strata keeps gets no
+	// policy unless `include_conflicts` is set.
+	//
+	// Corresponds with GET /v1/cleanup/lifecycle (the `GetLifecycles` operationId).
+	GetLifecycles(ctx context.Context, params *GetLifecyclesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetDescendants Find everything built on a base
 	//
 	// Corresponds with GET /v1/descendants (the `GetDescendants` operationId).
@@ -1133,6 +1328,47 @@ type ClientInterface interface {
 // Corresponds with GET /v1/ancestry (the `GetAncestry` operationId).
 func (c *Client) GetAncestry(ctx context.Context, params *GetAncestryParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetAncestryRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetCleanup Images safe to delete and the storage deleting them frees
+//
+// Deletion candidates: images matching `where` (abandoned ones by
+// default), whole multi-platform indexes only, leaving out any a kept
+// image is built on. `reclaimable_bytes` counts each layer once and
+// only when no kept image uses it. `format=csv` exports every
+// candidate.
+//
+// Corresponds with GET /v1/cleanup (the `GetCleanup` operationId).
+func (c *Client) GetCleanup(ctx context.Context, params *GetCleanupParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetCleanupRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetLifecycles ECR lifecycle policies that expire what strata calls abandoned
+//
+// One policy per repo expiring untagged images pushed more than the
+// staleness policy's abandoned window ago, checked against the index.
+// A repo where the rule would expire an image strata keeps gets no
+// policy unless `include_conflicts` is set.
+//
+// Corresponds with GET /v1/cleanup/lifecycle (the `GetLifecycles` operationId).
+func (c *Client) GetLifecycles(ctx context.Context, params *GetLifecyclesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetLifecyclesRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -1410,6 +1646,174 @@ func NewGetAncestryRequest(server string, params *GetAncestryParams) (*http.Requ
 		if params.Platform != nil {
 
 			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "platform", *params.Platform, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetCleanupRequest constructs an http.Request for the GetCleanup method
+func NewGetCleanupRequest(server string, params *GetCleanupParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/cleanup")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Where != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "where", *params.Where, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Scope != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "scope", *params.Scope, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Format != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "format", *params.Format, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetLifecyclesRequest constructs an http.Request for the GetLifecycles method
+func NewGetLifecyclesRequest(server string, params *GetLifecyclesParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/cleanup/lifecycle")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Repo != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "repo", *params.Repo, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Days != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "days", *params.Days, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.IncludeConflicts != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "include_conflicts", *params.IncludeConflicts, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -2383,6 +2787,31 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/ancestry (the `GetAncestry` operationId).
 	GetAncestryWithResponse(ctx context.Context, params *GetAncestryParams, reqEditors ...RequestEditorFn) (*GetAncestryResponse, error)
 
+	// GetCleanupWithResponse Images safe to delete and the storage deleting them frees
+	//
+	// Deletion candidates: images matching `where` (abandoned ones by
+	// default), whole multi-platform indexes only, leaving out any a kept
+	// image is built on. `reclaimable_bytes` counts each layer once and
+	// only when no kept image uses it. `format=csv` exports every
+	// candidate.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/cleanup (the `GetCleanup` operationId).
+	GetCleanupWithResponse(ctx context.Context, params *GetCleanupParams, reqEditors ...RequestEditorFn) (*GetCleanupResponse, error)
+
+	// GetLifecyclesWithResponse ECR lifecycle policies that expire what strata calls abandoned
+	//
+	// One policy per repo expiring untagged images pushed more than the
+	// staleness policy's abandoned window ago, checked against the index.
+	// A repo where the rule would expire an image strata keeps gets no
+	// policy unless `include_conflicts` is set.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/cleanup/lifecycle (the `GetLifecycles` operationId).
+	GetLifecyclesWithResponse(ctx context.Context, params *GetLifecyclesParams, reqEditors ...RequestEditorFn) (*GetLifecyclesResponse, error)
+
 	// GetDescendantsWithResponse Find everything built on a base
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -2549,6 +2978,116 @@ func (r GetAncestryResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetAncestryResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetCleanupResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Cleanup
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetCleanupResponse) GetJSON200() *Cleanup {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetCleanupResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r GetCleanupResponse) GetJSONDefault() *Error {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetCleanupResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetCleanupResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetCleanupResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetCleanupResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetLifecyclesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *[]Lifecycle
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetLifecyclesResponse) GetJSON200() *[]Lifecycle {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetLifecyclesResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r GetLifecyclesResponse) GetJSONDefault() *Error {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetLifecyclesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetLifecyclesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetLifecyclesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetLifecyclesResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -3303,6 +3842,43 @@ func (c *ClientWithResponses) GetAncestryWithResponse(ctx context.Context, param
 	return ParseGetAncestryResponse(rsp)
 }
 
+// GetCleanupWithResponse Images safe to delete and the storage deleting them frees
+//
+// Deletion candidates: images matching `where` (abandoned ones by
+// default), whole multi-platform indexes only, leaving out any a kept
+// image is built on. `reclaimable_bytes` counts each layer once and
+// only when no kept image uses it. `format=csv` exports every
+// candidate.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/cleanup (the `GetCleanup` operationId).
+func (c *ClientWithResponses) GetCleanupWithResponse(ctx context.Context, params *GetCleanupParams, reqEditors ...RequestEditorFn) (*GetCleanupResponse, error) {
+	rsp, err := c.GetCleanup(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetCleanupResponse(rsp)
+}
+
+// GetLifecyclesWithResponse ECR lifecycle policies that expire what strata calls abandoned
+//
+// One policy per repo expiring untagged images pushed more than the
+// staleness policy's abandoned window ago, checked against the index.
+// A repo where the rule would expire an image strata keeps gets no
+// policy unless `include_conflicts` is set.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/cleanup/lifecycle (the `GetLifecycles` operationId).
+func (c *ClientWithResponses) GetLifecyclesWithResponse(ctx context.Context, params *GetLifecyclesParams, reqEditors ...RequestEditorFn) (*GetLifecyclesResponse, error) {
+	rsp, err := c.GetLifecycles(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetLifecyclesResponse(rsp)
+}
+
 // GetDescendantsWithResponse Find everything built on a base
 //
 // Returns a wrapper object for the known response body format(s).
@@ -3530,6 +4106,89 @@ func ParseGetAncestryResponse(rsp *http.Response) (*GetAncestryResponse, error) 
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetCleanupResponse parses an HTTP response from a GetCleanupWithResponse call
+func ParseGetCleanupResponse(rsp *http.Response) (*GetCleanupResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetCleanupResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Cleanup
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	case rsp.StatusCode == 200:
+		// Content-type (text/csv) unsupported
+
+	}
+
+	return response, nil
+}
+
+// ParseGetLifecyclesResponse parses an HTTP response from a GetLifecyclesWithResponse call
+func ParseGetLifecyclesResponse(rsp *http.Response) (*GetLifecyclesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetLifecyclesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []Lifecycle
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Error

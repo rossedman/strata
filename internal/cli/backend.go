@@ -25,6 +25,8 @@ type Backend interface {
 	Stale(ctx context.Context, groupBy string) (*service.Table, error)
 	Roots(ctx context.Context) ([]service.Root, error)
 	Summary(ctx context.Context, groupBy string) (*service.Summary, error)
+	Cleanup(ctx context.Context, opts service.CleanupOptions) (*service.Cleanup, error)
+	Lifecycles(ctx context.Context, opts service.LifecycleOptions) ([]service.Lifecycle, error)
 }
 
 // Backend returns the local index, or a remote server when --server is
@@ -204,6 +206,33 @@ func (r *Remote) Summary(ctx context.Context, groupBy string) (*service.Summary,
 		return nil, err
 	}
 	return decode[*service.Summary](res.StatusCode(), res.Body, nil)
+}
+
+// Cleanup fetches the deletion candidates.
+func (r *Remote) Cleanup(ctx context.Context, opts service.CleanupOptions) (*service.Cleanup, error) {
+	p := &client.GetCleanupParams{Where: ptr(opts.Where), Limit: ptr(opts.Limit)}
+	if opts.Scope != "" {
+		sc := client.GetCleanupParamsScope(opts.Scope)
+		p.Scope = &sc
+	}
+	res, err := r.c.GetCleanupWithResponse(ctx, p)
+	if err != nil {
+		return nil, err
+	}
+	return decode[*service.Cleanup](res.StatusCode(), res.Body, nil)
+}
+
+// Lifecycles fetches generated ECR lifecycle policies.
+func (r *Remote) Lifecycles(ctx context.Context, opts service.LifecycleOptions) ([]service.Lifecycle, error) {
+	p := &client.GetLifecyclesParams{Days: ptr(opts.Days), IncludeConflicts: ptr(opts.IncludeConflicts)}
+	if len(opts.Repos) > 0 {
+		p.Repo = &opts.Repos
+	}
+	res, err := r.c.GetLifecyclesWithResponse(ctx, p)
+	if err != nil {
+		return nil, err
+	}
+	return decode[[]service.Lifecycle](res.StatusCode(), res.Body, nil)
 }
 
 // Release calls a Backend close function, keeping the first error.

@@ -158,6 +158,40 @@ func TestEndpoints(t *testing.T) {
 	}
 }
 
+func TestCleanupEndpoints(t *testing.T) {
+	t.Parallel()
+	c, e := serve(t, Options{})
+	where := "tags = 0"
+	cl, err := c.GetCleanupWithResponse(ctx, &client.GetCleanupParams{Where: &where})
+	if err != nil || cl.JSON200 == nil || cl.JSON200.Where != where {
+		t.Fatalf("cleanup = %d %s", cl.StatusCode(), cl.Body)
+	}
+	all, csv := "", client.Csv
+	exp, err := c.GetCleanupWithResponse(ctx, &client.GetCleanupParams{Where: &all, Format: &csv})
+	if err != nil || exp.StatusCode() != http.StatusOK || !strings.HasPrefix(string(exp.Body), "repo,digest,images") {
+		t.Fatalf("export = %d %s", exp.StatusCode(), exp.Body)
+	}
+	bad := "nope = 1"
+	if r, _ := c.GetCleanupWithResponse(ctx, &client.GetCleanupParams{Where: &bad}); r.JSON400 == nil {
+		t.Fatalf("bad cleanup = %d", r.StatusCode())
+	}
+	days, yes := 1, true
+	lc, err := c.GetLifecyclesWithResponse(ctx, &client.GetLifecyclesParams{Days: &days, IncludeConflicts: &yes, Repo: &[]string{"*/payments/*"}})
+	if err != nil || lc.JSON200 == nil || len(*lc.JSON200) != 2 || (*lc.JSON200)[0].Policy == nil {
+		t.Fatalf("lifecycle = %d %s", lc.StatusCode(), lc.Body)
+	}
+	if r, _ := c.GetLifecyclesWithResponse(ctx, &client.GetLifecyclesParams{Repo: &[]string{"["}}); r.JSON400 == nil {
+		t.Fatalf("bad glob = %d", r.StatusCode())
+	}
+	_ = e.Svc.Store.Close()
+	if r, _ := c.GetCleanupWithResponse(ctx, nil); r.StatusCode() != http.StatusInternalServerError {
+		t.Fatalf("cleanup on closed index = %d", r.StatusCode())
+	}
+	if r, _ := c.GetLifecyclesWithResponse(ctx, nil); r.StatusCode() != http.StatusInternalServerError {
+		t.Fatalf("lifecycle on closed index = %d", r.StatusCode())
+	}
+}
+
 func TestValidationAndAuth(t *testing.T) {
 	t.Parallel()
 	e := testenv.Indexed(t)
