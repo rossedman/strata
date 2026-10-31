@@ -55,17 +55,64 @@ func (s *Service) nodes(ctx context.Context, ids []string) (map[string]graph.Nod
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	var phantoms []string
 	for _, id := range ids {
 		if _, ok := out[id]; ok {
 			continue
 		}
-		n := graph.Node{ID: id, Kind: graph.KindPhantom, Label: "deleted " + graph.ShortDigest(strings.TrimPrefix(id, model.PhantomPrefix))}
+		n := graph.Node{ID: id, Kind: graph.KindPhantom, Label: "not in registry " + graph.ShortDigest(strings.TrimPrefix(id, model.PhantomPrefix))}
 		if !model.IsPhantom(id) {
 			n.Label = graph.ShortDigest(id)
+		} else {
+			phantoms = append(phantoms, id)
 		}
 		out[id] = n
 	}
+	names, err := s.phantomNames(ctx, phantoms)
+	if err != nil {
+		return nil, err
+	}
+	for id, name := range names {
+		n := out[id]
+		n.Label, n.Note = name, "named by build provenance; the image itself is not in the index"
+		out[id] = n
+	}
 	return out, nil
+}
+
+// phantomNames names layers no indexed image ends at from the provenance
+// of the images built directly on them: the base those builds name that
+// could not be fetched. When the builds disagree, every name with the
+// most votes is listed.
+func (s *Service) phantomNames(ctx context.Context, ids []string) (map[string]string, error) {
+	out := map[string]string{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	rows, err := s.db().QueryContext(ctx, `
+		WITH votes AS (
+			SELECT l.parent AS id, b.ref, count(*) AS n
+			FROM lineage l JOIN base_refs b ON b.digest = l.digest
+			WHERE list_contains(?, l.parent)
+			  AND b.base_digest NOT IN (SELECT digest FROM images)
+			  AND b.base_digest NOT IN (SELECT index_digest FROM index_manifests)
+			GROUP BY ALL
+		)
+		SELECT id, string_agg(ref, ' or ' ORDER BY ref) FROM (
+			SELECT id, ref, rank() OVER (PARTITION BY id ORDER BY n DESC) AS r FROM votes
+		) WHERE r = 1 GROUP BY id`, ids)
+	if err != nil {
+		return nil, fmt.Errorf("name phantoms: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var id, name string
+		if err := rows.Scan(&id, &name); err != nil {
+			return nil, err
+		}
+		out[id] = name
+	}
+	return out, rows.Err()
 }
 
 // build turns ids with depths and edges into a graph, in a stable order.

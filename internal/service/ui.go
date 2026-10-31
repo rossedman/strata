@@ -275,7 +275,10 @@ func (s *Service) decorateNodes(ctx context.Context, rows []OutlineRow, ids []st
 		case graph.KindExternal:
 			rows[i].Kind = "external"
 		case graph.KindPhantom:
-			rows[i].Kind, rows[i].Name = "phantom", "Shared layers, image not in the registry"
+			rows[i].Kind = "phantom"
+			if n.Note == "" {
+				rows[i].Name = "Shared layers, image not in the registry"
+			}
 		default:
 			rows[i].Kind = "base"
 		}

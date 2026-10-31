@@ -178,6 +178,12 @@ type Config struct {
 	External []string `mapstructure:"external"`
 	// Referrers fetches SBOMs, signatures and attestations.
 	Referrers bool `mapstructure:"referrers"`
+	// Provenance reads the BuildKit provenance attached to images, which
+	// names the bases they were built from.
+	Provenance bool `mapstructure:"provenance"`
+	// FetchBases fetches, by digest, bases provenance names that are not
+	// indexed, from whatever registry they are in.
+	FetchBases bool `mapstructure:"fetch-bases"`
 	// Platform is the default when a ref names a multi-platform index.
 	Platform string `mapstructure:"platform"`
 	// LineageLabels are label keys naming an image's base.
@@ -218,6 +224,8 @@ func Defaults() map[string]any {
 		"db":                DefaultDB(),
 		"external":          []string{},
 		"referrers":         true,
+		"provenance":        true,
+		"fetch-bases":       true,
 		"platform":          "linux/amd64",
 		"lineage-labels":    []string{},
 		"policy":            "",

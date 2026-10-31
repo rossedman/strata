@@ -64,7 +64,29 @@ Every edge records where it came from, and graphs draw each source differently:
 | Source | Confidence | Drawn as |
 | --- | --- | --- |
 | `layers` | exact | solid edge |
+| `attestation` (BuildKit provenance) | declared | dashed edge |
 | `annotation` (`org.opencontainers.image.base.digest` or `.name`) | declared | dashed edge |
 | `label` (keys in `lineage-labels`) | declared | dashed edge |
 
 When an image has a layer edge and a declared edge that point at different stacks, the layer edge wins and the image is marked `conflict`. Query them with `strata query 'conflict'`.
+
+## Bases in other registries, and old versions
+
+The parent rule needs the base's exact digest in the index. Two common cases break that: the base lives in a registry strata does not crawl, such as another ECR account or Docker Hub, and the image was built on a version of the base whose tag has since moved.
+
+BuildKit (`docker buildx`) attaches build provenance to the images it pushes, by default. It lists every image the build pulled, by name and by the digest it resolved to. strata reads it while crawling (`provenance: true`, the default) and then fetches each named base that is not indexed, by digest, from whatever registry it lives in (`fetch-bases: true`, the default). Lineage then walks the image up to the exact base version it was built on, by its layers. A base from a registry that is not crawled is marked external.
+
+A multi-stage build lists every stage's image. Only the one whose layers the image starts with becomes its parent; the others are build stages.
+
+When a base cannot be fetched, because it was deleted or strata's credentials cannot reach its registry, strata records why and tries again a week later. The layers it left behind are then named after it, such as `base/python:3.12`, instead of "Shared layers, image not in the registry". `strata explain` and the image page list what the build pulled and where each stands:
+
+```text
+  built from, by its provenance:
+    111111111111.dkr.ecr.us-east-1.amazonaws.com/base/node:20  the parent
+    docker.io/library/golang:1.22  another build stage; the image does not start with its layers
+    111111111111.dkr.ecr.us-east-1.amazonaws.com/base/python:3.12  not available: … MANIFEST_UNKNOWN …
+```
+
+Images indexed before strata read provenance get it too, without re-crawling: each crawl reads the provenance of the multi-platform images already indexed from that registry whose provenance was never read, about three small requests each, and only once per image. A stopped crawl resumes where it left off. Images pushed without attestations have no provenance; they are checked once and skipped after.
+
+To reach bases in another AWS account, give that registry its own credentials; see [Scaling](scaling.md#registries-in-several-accounts). Reading provenance costs two small requests per new multi-platform index.

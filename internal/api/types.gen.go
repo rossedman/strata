@@ -52,6 +52,30 @@ func (e BaseVersionSource) Valid() bool {
 	}
 }
 
+// Defines values for BuiltFromStatus.
+const (
+	Missing BuiltFromStatus = "missing"
+	Parent  BuiltFromStatus = "parent"
+	Pending BuiltFromStatus = "pending"
+	Stage   BuiltFromStatus = "stage"
+)
+
+// Valid indicates whether the value is a known member of the BuiltFromStatus enum.
+func (e BuiltFromStatus) Valid() bool {
+	switch e {
+	case Missing:
+		return true
+	case Parent:
+		return true
+	case Pending:
+		return true
+	case Stage:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for CleanupScope.
 const (
 	CleanupScopeRegistry CleanupScope = "registry"
@@ -390,6 +414,24 @@ type BaseVersionConfidence string
 // BaseVersionSource defines model for BaseVersion.Source.
 type BaseVersionSource string
 
+// BuiltFrom An image a build pulled, by its BuildKit provenance
+type BuiltFrom struct {
+	// Digest The digest the build resolved it to
+	Digest *string `json:"digest,omitempty"`
+
+	// Reason Why a missing base could not be fetched
+	Reason *string `json:"reason,omitempty"`
+
+	// Ref repo:tag as the build named it
+	Ref string `json:"ref"`
+
+	// Status parent: built on it; stage: another build stage's image; missing: could not be fetched; pending: the next index fetches it
+	Status BuiltFromStatus `json:"status"`
+}
+
+// BuiltFromStatus parent: built on it; stage: another build stage's image; missing: could not be fetched; pending: the next index fetches it
+type BuiltFromStatus string
+
 // Change One line of a diff between snapshots
 type Change struct {
 	From   float32 `json:"from"`
@@ -468,9 +510,17 @@ type ConfigInfo struct {
 
 // CrawlStats Running totals of a crawl
 type CrawlStats struct {
-	ImagesFiltered int64 `json:"images_filtered"`
-	NewImages      int64 `json:"new_images"`
-	Referrers      int64 `json:"referrers"`
+	// BasesFetched Bases fetched by digest because provenance named them
+	BasesFetched *int64 `json:"bases_fetched,omitempty"`
+
+	// BasesMissing Bases provenance named that could not be fetched
+	BasesMissing   *int64 `json:"bases_missing,omitempty"`
+	ImagesFiltered int64  `json:"images_filtered"`
+	NewImages      int64  `json:"new_images"`
+
+	// ProvenanceBackfilled Already indexed images whose provenance this crawl read
+	ProvenanceBackfilled *int64 `json:"provenance_backfilled,omitempty"`
+	Referrers            int64  `json:"referrers"`
 
 	// Repos Repos crawled so far
 	Repos         int64 `json:"repos"`
@@ -700,7 +750,10 @@ type Lifecycle struct {
 // LineageInfo Where an image sits in the lineage graph, with the evidence for its parent
 type LineageInfo struct {
 	// Ancestry A lineage graph: an ancestry chain, a descendant tree, a query graph or the registry map
-	Ancestry    Graph             `json:"ancestry"`
+	Ancestry Graph `json:"ancestry"`
+
+	// BuiltFrom Images the build's provenance says it pulled, and whether each is indexed
+	BuiltFrom   *[]BuiltFrom      `json:"built_from,omitempty"`
 	Children    int               `json:"children"`
 	Conflict    bool              `json:"conflict"`
 	Descendants int               `json:"descendants"`

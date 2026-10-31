@@ -3,6 +3,7 @@
 package testreg
 
 import (
+	"encoding/json"
 	"io"
 	"log"
 	"net/http/httptest"
@@ -17,6 +18,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/google/go-containerregistry/pkg/v1/random"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/google/go-containerregistry/pkg/v1/static"
 	"github.com/google/go-containerregistry/pkg/v1/types"
 )
 
@@ -201,4 +203,46 @@ func (r *Registry) Digest(short string) string {
 		r.t.Fatal(err)
 	}
 	return d.String()
+}
+
+// WithProvenance returns an index holding img and, as BuildKit pushes
+// it, an attestation manifest whose SLSA provenance lists materials: purl
+// to digest, such as pkg:docker/node@20 to sha256:….
+func (r *Registry) WithProvenance(img v1.Image, materials map[string]string) v1.ImageIndex {
+	r.t.Helper()
+	d, err := img.Digest()
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	type mat struct {
+		URI    string            `json:"uri"`
+		Digest map[string]string `json:"digest"`
+	}
+	var mats []mat
+	for uri, dg := range materials {
+		mats = append(mats, mat{URI: uri, Digest: map[string]string{"sha256": strings.TrimPrefix(dg, "sha256:")}})
+	}
+	st, err := json.Marshal(map[string]any{
+		"_type":         "https://in-toto.io/Statement/v0.1",
+		"predicateType": "https://slsa.dev/provenance/v0.2",
+		"subject":       []map[string]any{{"name": "_", "digest": map[string]string{"sha256": d.Hex}}},
+		"predicate":     map[string]any{"materials": mats},
+	})
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	att, err := mutate.Append(mutate.ConfigMediaType(mutate.MediaType(empty.Image, types.OCIManifestSchema1), types.OCIConfigJSON), mutate.Addendum{
+		Layer:       static.NewLayer(st, "application/vnd.in-toto+json"),
+		Annotations: map[string]string{"in-toto.io/predicate-type": "https://slsa.dev/provenance/v0.2"},
+	})
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	return mutate.AppendManifests(mutate.IndexMediaType(empty.Index, types.OCIImageIndex),
+		mutate.IndexAddendum{Add: img, Descriptor: v1.Descriptor{Platform: &v1.Platform{OS: "linux", Architecture: "amd64"}}},
+		mutate.IndexAddendum{Add: att, Descriptor: v1.Descriptor{
+			Platform:    &v1.Platform{OS: "unknown", Architecture: "unknown"},
+			Annotations: map[string]string{"vnd.docker.reference.type": "attestation-manifest", "vnd.docker.reference.digest": d.String()},
+		}},
+	)
 }

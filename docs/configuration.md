@@ -45,6 +45,11 @@ external:
 # Fetch SBOMs, signatures and attestations (OCI referrers and cosign tags).
 referrers: true
 
+# Read BuildKit provenance, which names the base each image was built from,
+# and fetch those bases by digest from any registry when they are not indexed.
+provenance: true
+fetch-bases: true
+
 # Platform picked when a ref names a multi-platform index.
 platform: linux/amd64
 
@@ -103,6 +108,8 @@ log-level: info
 | `registries[].pushed-since` | | Skip images pushed longer ago than this, such as `90d` (registry APIs only) |
 | `external` | `[]` | Full refs of upstream bases to fetch |
 | `referrers` | `true` | Fetch referrers and cosign tags |
+| `provenance` | `true` | Read BuildKit provenance, which names the base each image was built from |
+| `fetch-bases` | `true` | Fetch, by digest, bases provenance names that are not indexed, from any registry |
 | `platform` | `linux/amd64` | Default platform for multi-platform refs |
 | `lineage-labels` | `[]` | Label keys naming a base |
 | `policy` | built-in | Staleness policy file |

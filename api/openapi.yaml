@@ -1039,6 +1039,23 @@ components:
             $ref: "#/components/schemas/Edge"
         ancestry:
           $ref: "#/components/schemas/Graph"
+        built_from:
+          type: array
+          description: "Images the build's provenance says it pulled, and whether each is indexed"
+          items:
+            $ref: "#/components/schemas/BuiltFrom"
+    BuiltFrom:
+      description: "An image a build pulled, by its BuildKit provenance"
+      type: object
+      required: [ref, status]
+      properties:
+        ref: { type: string, description: "repo:tag as the build named it" }
+        digest: { type: string, description: "The digest the build resolved it to" }
+        status:
+          type: string
+          enum: [parent, stage, missing, pending]
+          description: "parent: built on it; stage: another build stage's image; missing: could not be fetched; pending: the next index fetches it"
+        reason: { type: string, description: "Why a missing base could not be fetched" }
     Explanation:
       description: "Everything known about one image"
       type: object
@@ -1243,6 +1260,9 @@ components:
         tag_moves: { type: integer, format: int64 }
         requests: { type: integer, format: int64 }
         referrers: { type: integer, format: int64 }
+        bases_fetched: { type: integer, format: int64, description: "Bases fetched by digest because provenance named them" }
+        bases_missing: { type: integer, format: int64, description: "Bases provenance named that could not be fetched" }
+        provenance_backfilled: { type: integer, format: int64, description: "Already indexed images whose provenance this crawl read" }
         repos_filtered: { type: integer, format: int64 }
         tags_filtered: { type: integer, format: int64 }
         images_filtered: { type: integer, format: int64 }
