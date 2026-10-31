@@ -5,7 +5,45 @@ package api
 
 import (
 	"time"
+
+	openapi_types "github.com/oapi-codegen/runtime/types"
 )
+
+// Defines values for ActivitySource.
+const (
+	ActivitySourceCreated ActivitySource = "created"
+	ActivitySourcePushed  ActivitySource = "pushed"
+)
+
+// Valid indicates whether the value is a known member of the ActivitySource enum.
+func (e ActivitySource) Valid() bool {
+	switch e {
+	case ActivitySourceCreated:
+		return true
+	case ActivitySourcePushed:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AgesSource.
+const (
+	AgesSourceCreated AgesSource = "created"
+	AgesSourcePushed  AgesSource = "pushed"
+)
+
+// Valid indicates whether the value is a known member of the AgesSource enum.
+func (e AgesSource) Valid() bool {
+	switch e {
+	case AgesSourceCreated:
+		return true
+	case AgesSourcePushed:
+		return true
+	default:
+		return false
+	}
+}
 
 // Defines values for BaseVersionConfidence.
 const (
@@ -307,6 +345,24 @@ func (e Verdict) Valid() bool {
 	}
 }
 
+// Defines values for GetStorageHistoryParamsGroupBy.
+const (
+	GetStorageHistoryParamsGroupByRepo GetStorageHistoryParamsGroupBy = "repo"
+	GetStorageHistoryParamsGroupByRoot GetStorageHistoryParamsGroupBy = "root"
+)
+
+// Valid indicates whether the value is a known member of the GetStorageHistoryParamsGroupBy enum.
+func (e GetStorageHistoryParamsGroupBy) Valid() bool {
+	switch e {
+	case GetStorageHistoryParamsGroupByRepo:
+		return true
+	case GetStorageHistoryParamsGroupByRoot:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for GetCleanupParamsScope.
 const (
 	GetCleanupParamsScopeRegistry GetCleanupParamsScope = "registry"
@@ -395,6 +451,62 @@ func (e SearchParamsPushed) Valid() bool {
 	default:
 		return false
 	}
+}
+
+// Activity Images pushed per day
+type Activity struct {
+	Days []DayCount         `json:"days"`
+	From openapi_types.Date `json:"from"`
+
+	// LastPush The repo's newest push, in the window or not
+	LastPush *openapi_types.Date `json:"last_push,omitempty"`
+	Repo     *string             `json:"repo,omitempty"`
+
+	// Repos The busiest repos in the window
+	Repos []RepoCount `json:"repos"`
+
+	// Source pushed when the registry reports push times, else created
+	Source ActivitySource     `json:"source"`
+	To     openapi_types.Date `json:"to"`
+}
+
+// ActivitySource pushed when the registry reports push times, else created
+type ActivitySource string
+
+// Adoption Which releases of a base images are built on
+type Adoption struct {
+	Base     string     `json:"base"`
+	Bases    []BaseRepo `json:"bases"`
+	Releases []Release  `json:"releases"`
+}
+
+// AgeBin defines model for AgeBin.
+type AgeBin struct {
+	// Filter The query that selects this bucket's images
+	Filter string `json:"filter"`
+	Label  string `json:"label"`
+
+	// Unrated Images with no verdict yet
+	Unrated int64 `json:"unrated"`
+
+	// Verdicts Images per verdict
+	Verdicts VerdictCounts `json:"verdicts"`
+}
+
+// Ages Images by age and verdict
+type Ages struct {
+	Bins   []AgeBin   `json:"bins"`
+	Source AgesSource `json:"source"`
+}
+
+// AgesSource defines model for Ages.Source.
+type AgesSource string
+
+// BaseRepo defines model for BaseRepo.
+type BaseRepo struct {
+	// Images Images in other repos built directly on it
+	Images int64  `json:"images"`
+	Repo   string `json:"repo"`
 }
 
 // BaseVersion One digest a base tag has held, and how much is built on it
@@ -508,6 +620,29 @@ type ConfigInfo struct {
 	Workdir     string             `json:"workdir"`
 }
 
+// Coverage How one registry's images were linked to their bases
+type Coverage struct {
+	// Declared Parent declared by an annotation or label
+	Declared int64 `json:"declared"`
+	Images   int64 `json:"images"`
+
+	// Layers Parent found by shared layers
+	Layers int64 `json:"layers"`
+
+	// Named Base named by provenance but not indexed
+	Named int64 `json:"named"`
+
+	// Provenance Parent found by build provenance
+	Provenance int64  `json:"provenance"`
+	Registry   string `json:"registry"`
+
+	// Roots No parent: bases, FROM scratch and single-layer images
+	Roots int64 `json:"roots"`
+
+	// Unknown Base neither indexed nor named
+	Unknown int64 `json:"unknown"`
+}
+
 // CrawlStats Running totals of a crawl
 type CrawlStats struct {
 	// BasesFetched Bases fetched by digest because provenance named them
@@ -535,6 +670,12 @@ type CrawlStats struct {
 	TagMoves     int64 `json:"tag_moves"`
 	Tags         int64 `json:"tags"`
 	TagsFiltered int64 `json:"tags_filtered"`
+}
+
+// DayCount defines model for DayCount.
+type DayCount struct {
+	Count int64              `json:"count"`
+	Day   openapi_types.Date `json:"day"`
 }
 
 // DescendantResult A descendant graph and the base versions it starts from
@@ -699,14 +840,27 @@ type IndexStatus struct {
 	StartedAt  *time.Time `json:"started_at,omitempty"`
 }
 
+// KPIDay One day of whole-index numbers
+type KPIDay struct {
+	Abandoned    int64              `json:"abandoned"`
+	Day          openapi_types.Date `json:"day"`
+	DedupBytes   int64              `json:"dedup_bytes"`
+	Images       int64              `json:"images"`
+	Repos        int64              `json:"repos"`
+	Stale        int64              `json:"stale"`
+	UniqueStacks int64              `json:"unique_stacks"`
+}
+
 // LayerInfo One layer and the build step that created it
 type LayerInfo struct {
-	BlobDigest string `json:"blob_digest"`
-	CreatedBy  string `json:"created_by"`
-	DiffId     string `json:"diff_id"`
-	Position   int    `json:"position"`
-	SharedBy   int    `json:"shared_by"`
-	Size       int64  `json:"size"`
+	// AddedBy The ancestor whose build added this layer, an image digest or phantom id; unset when the image's own build did
+	AddedBy    *string `json:"added_by,omitempty"`
+	BlobDigest string  `json:"blob_digest"`
+	CreatedBy  string  `json:"created_by"`
+	DiffId     string  `json:"diff_id"`
+	Position   int     `json:"position"`
+	SharedBy   int     `json:"shared_by"`
+	Size       int64   `json:"size"`
 }
 
 // Lifecycle A generated ECR lifecycle policy for one repo, checked against the index
@@ -893,10 +1047,48 @@ type RefreshStats struct {
 	VerdictsChanged int `json:"verdicts_changed"`
 }
 
+// Release One build of a base: an index or a single-platform image
+type Release struct {
+	// Behind Newer releases of the base
+	Behind int                 `json:"behind"`
+	Built  *openapi_types.Date `json:"built,omitempty"`
+	Digest string              `json:"digest"`
+	Images int64               `json:"images"`
+	Repos  int64               `json:"repos"`
+	Tags   []string            `json:"tags"`
+
+	// Verdicts Images per verdict
+	Verdicts VerdictCounts `json:"verdicts"`
+}
+
+// RepoCount defines model for RepoCount.
+type RepoCount struct {
+	Count int64  `json:"count"`
+	Repo  string `json:"repo"`
+}
+
 // Resolved A ref and the platform manifest digest it names
 type Resolved struct {
 	Digest string `json:"digest"`
 	Ref    string `json:"ref"`
+}
+
+// Rollout How images moved between a base's releases over time
+type Rollout struct {
+	Base   string               `json:"base"`
+	Days   []openapi_types.Date `json:"days"`
+	Series []RolloutSeries      `json:"series"`
+}
+
+// RolloutSeries defines model for RolloutSeries.
+type RolloutSeries struct {
+	Built  *openapi_types.Date `json:"built,omitempty"`
+	Counts []int64             `json:"counts"`
+
+	// Older Folds older and deleted releases
+	Older   *bool    `json:"older,omitempty"`
+	Release string   `json:"release"`
+	Tags    []string `json:"tags"`
 }
 
 // Root A root base and how much descends from it
@@ -960,6 +1152,25 @@ type StalenessInfo struct {
 	Verdict Verdict `json:"verdict"`
 }
 
+// Storage Stored bytes over time, split by root base or repo
+type Storage struct {
+	Days    []openapi_types.Date `json:"days"`
+	GroupBy string               `json:"group_by"`
+	Series  []StorageSeries      `json:"series"`
+}
+
+// StorageSeries One group's stored bytes per day
+type StorageSeries struct {
+	Group string `json:"group"`
+
+	// Label Name of a root base that is not indexed
+	Label *string `json:"label,omitempty"`
+
+	// Other Folds every group outside the top
+	Other  *bool   `json:"other,omitempty"`
+	Values []int64 `json:"values"`
+}
+
 // Summary Footprint summary of the registry, optionally grouped
 type Summary struct {
 	GroupBy               *string             `json:"group_by,omitempty"`
@@ -990,6 +1201,9 @@ type VerdictCounts struct {
 
 // Budget defines model for Budget.
 type Budget = int
+
+// Days defines model for Days.
+type Days = int
 
 // Filter defines model for Filter.
 type Filter = string
@@ -1023,6 +1237,50 @@ type GetAncestryParams struct {
 	// Platform Platform to pick when the ref names a multi-platform index, such as linux/arm64
 	Platform *Platform `form:"platform,omitempty" json:"platform,omitempty"`
 }
+
+// GetActivityParams defines parameters for GetActivity.
+type GetActivityParams struct {
+	// Repo Only this repo, by its full name
+	Repo *string `form:"repo,omitempty" json:"repo,omitempty"`
+
+	// Days How many days back the chart reaches
+	Days *Days `form:"days,omitempty" json:"days,omitempty"`
+}
+
+// GetAdoptionParams defines parameters for GetAdoption.
+type GetAdoptionParams struct {
+	// Base The base repo, by its full name
+	Base *string `form:"base,omitempty" json:"base,omitempty"`
+}
+
+// GetKPIHistoryParams defines parameters for GetKPIHistory.
+type GetKPIHistoryParams struct {
+	// Days How many days back the chart reaches
+	Days *Days `form:"days,omitempty" json:"days,omitempty"`
+}
+
+// GetRolloutParams defines parameters for GetRollout.
+type GetRolloutParams struct {
+	// Base The base repo, by its full name
+	Base string `form:"base" json:"base"`
+
+	// Days How many days back the chart reaches
+	Days *Days `form:"days,omitempty" json:"days,omitempty"`
+}
+
+// GetStorageHistoryParams defines parameters for GetStorageHistory.
+type GetStorageHistoryParams struct {
+	GroupBy *GetStorageHistoryParamsGroupBy `form:"group_by,omitempty" json:"group_by,omitempty"`
+
+	// Top Groups charted on their own
+	Top *int `form:"top,omitempty" json:"top,omitempty"`
+
+	// Days How many days back the chart reaches
+	Days *Days `form:"days,omitempty" json:"days,omitempty"`
+}
+
+// GetStorageHistoryParamsGroupBy defines parameters for GetStorageHistory.
+type GetStorageHistoryParamsGroupBy string
 
 // GetCleanupParams defines parameters for GetCleanup.
 type GetCleanupParams struct {
