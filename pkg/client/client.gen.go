@@ -461,9 +461,14 @@ type Cleanup struct {
 	Images int `json:"images"`
 
 	// ReclaimableBytes Layers freed, each once, none a kept image uses
-	ReclaimableBytes int64         `json:"reclaimable_bytes"`
-	Repos            []CleanupRepo `json:"repos"`
-	Scope            CleanupScope  `json:"scope"`
+	ReclaimableBytes int64 `json:"reclaimable_bytes"`
+
+	// RepoCount Every repo with candidates
+	RepoCount int `json:"repo_count"`
+
+	// Repos Repos with candidates, most reclaimable first, capped by limit
+	Repos []CleanupRepo `json:"repos"`
+	Scope CleanupScope  `json:"scope"`
 
 	// Size Sizes the manifests state, a shared layer counted per image
 	Size int64 `json:"size"`
@@ -683,6 +688,9 @@ type IndexStatus struct {
 
 	// LastRefresh What the last refresh rewrote; refreshes are incremental
 	LastRefresh *RefreshStats `json:"last_refresh,omitempty"`
+
+	// RefreshError Why the last refresh failed; cleared when one succeeds
+	RefreshError *string `json:"refresh_error,omitempty"`
 
 	// RefreshEverySeconds How often views refresh during a crawl; 0 means only at the end
 	RefreshEverySeconds int64 `json:"refresh_every_seconds"`
@@ -1030,7 +1038,7 @@ type GetCleanupParams struct {
 	// Scope Count a layer as freed when no kept image in the registry, or in the same repo, uses it
 	Scope *GetCleanupParamsScope `form:"scope,omitempty" json:"scope,omitempty"`
 
-	// Limit Most candidates to list, largest first; totals count them all. 0 lists all.
+	// Limit Most candidates and repos to list, largest first; totals count them all. 0 lists all.
 	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 
 	// Format json, or csv to export every candidate

@@ -152,6 +152,26 @@ Credentials come from the standard AWS chain: environment variables, `AWS_PROFIL
 }
 ```
 
+### Registries in several accounts
+
+When bases live in one account and applications in another, list both registries. One index holds them all, and lineage walks across them: an application image finds its base in the other account. Crawl the base repos first so they are named from the first refresh.
+
+Each ECR registry can use its own credentials:
+
+```yaml
+registries:
+  - host: 111111111111.dkr.ecr.us-east-1.amazonaws.com   # bases
+    aws-profile: bases-readonly                         # a profile in ~/.aws/config, such as SSO
+    include-repos: ["base/**"]
+  - host: 222222222222.dkr.ecr.us-east-1.amazonaws.com   # applications
+    assume-role: arn:aws:iam::222222222222:role/strata-read
+    external-id: strata                                 # only if the role's trust policy requires it
+```
+
+`aws-profile` picks a named profile; `assume-role` assumes a role starting from that profile, or from the default chain (environment, instance role, EKS web identity). With neither, the default chain is used. Every crawl can use every configured registry's credentials, so a base in one account referenced from another can be fetched.
+
+From a single identity, a repository policy in the other account works too: it grants `ecr:DescribeRepositories`, `ecr:DescribeImages`, `ecr:BatchGetImage` and `ecr:GetDownloadUrlForLayer` to the identity's account or role, with no role to assume.
+
 Set `provider: distribution` to crawl an ECR host through the plain registry protocol instead, for example when the identity can pull but not describe. Push and pull times and `pushed-since` aren't available then.
 
 ## Harbor, Artifact Registry and ACR

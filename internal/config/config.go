@@ -35,6 +35,13 @@ type Registry struct {
 	// the ECR, Artifact Registry or ACR API for those hosts; ecr, harbor,
 	// gar and acr force one; distribution uses the plain distribution API.
 	Provider string `mapstructure:"provider"`
+	// AWSProfile, AssumeRole and ExternalID pick the AWS identity for an
+	// ECR registry, so registries in different accounts can each use
+	// their own credentials. Unset, the default AWS credential chain is
+	// used.
+	AWSProfile string `mapstructure:"aws-profile"`
+	AssumeRole string `mapstructure:"assume-role"`
+	ExternalID string `mapstructure:"external-id"`
 	// Projects are the Google Cloud projects whose Artifact Registry
 	// repositories are listed (gar only).
 	Projects []string `mapstructure:"projects"`
@@ -107,6 +114,12 @@ func (r Registry) Check() error {
 		if _, _, ok := ecr.ParseHost(r.Host); !ok {
 			return fmt.Errorf("provider ecr needs an ECR host, such as 123456789012.dkr.ecr.us-east-1.amazonaws.com")
 		}
+	}
+	if (r.AWSProfile != "" || r.AssumeRole != "" || r.ExternalID != "") && r.Kind() != ProviderECR {
+		return fmt.Errorf("aws-profile, assume-role and external-id apply to ECR registries only")
+	}
+	if r.ExternalID != "" && r.AssumeRole == "" {
+		return fmt.Errorf("external-id needs assume-role")
 	}
 	if r.Kind() == ProviderGAR {
 		if _, ok := gar.ParseHost(r.Host); !ok {

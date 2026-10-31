@@ -98,11 +98,12 @@ Harbor (--provider harbor). That needs no request per tag, records push times
 		}
 		defer cli.Close(svc, &err)
 		var results []service.IndexResult
+		all, err := registryOptions(cmd.Context(), regs)
+		if err != nil {
+			return err
+		}
 		for i, r := range regs {
-			opts, err := crawlOptions(cmd.Context(), r)
-			if err != nil {
-				return err
-			}
+			opts := all[i]
 			if i == 0 {
 				opts.External = external
 			}
@@ -145,7 +146,35 @@ Harbor (--provider harbor). That needs no request per tag, records push times
 }
 
 // newECR opens an ECR registry client; tests replace it.
-var newECR = func(ctx context.Context, host string) (*ecr.Registry, error) { return ecr.New(ctx, host) }
+var newECR = func(ctx context.Context, r config.Registry) (*ecr.Registry, error) {
+	return ecr.New(ctx, r.Host, ecr.Credentials{Profile: r.AWSProfile, RoleARN: r.AssumeRole, ExternalID: r.ExternalID})
+}
+
+// registryOptions builds crawl options for each registry. Each crawl can
+// authenticate to every configured ECR registry, each with its own
+// credentials, so bases and externals in another account can be fetched.
+func registryOptions(ctx context.Context, regs []config.Registry) ([]crawl.Options, error) {
+	out := make([]crawl.Options, len(regs))
+	var keychains []authn.Keychain
+	for i, r := range regs {
+		opts, err := crawlOptions(ctx, r)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", r.Host, err)
+		}
+		if kc, ok := opts.Lister.(*ecr.Registry); ok {
+			keychains = append(keychains, kc)
+		}
+		out[i] = opts
+	}
+	for i := range out {
+		own := out[i].Keychain
+		if own == nil {
+			own = authn.DefaultKeychain
+		}
+		out[i].Keychain = authn.NewMultiKeychain(append(append([]authn.Keychain{}, keychains...), own)...)
+	}
+	return out, nil
+}
 
 // indexedHosts returns the hosts of the configured registries.
 func indexedHosts() []string {
@@ -185,7 +214,7 @@ func crawlOptions(ctx context.Context, r config.Registry) (crawl.Options, error)
 	ua := opts.UserAgent
 	switch r.Kind() {
 	case config.ProviderECR:
-		reg, err := newECR(ctx, r.Host)
+		reg, err := newECR(ctx, r)
 		if err != nil {
 			return crawl.Options{}, err
 		}

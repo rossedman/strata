@@ -96,6 +96,9 @@ log-level: info
 | `registries[].workers` | `16` | Concurrent requests |
 | `registries[].rate` | `0` | Requests per second, 0 is unlimited |
 | `registries[].provider` | `auto` | `auto` lists ECR, Artifact Registry and ACR hosts through their APIs; `ecr`, `harbor`, `gar` and `acr` force one; `distribution` uses the plain registry API |
+| `registries[].aws-profile` | | ECR only: a named AWS profile, such as an SSO profile for the registry's account |
+| `registries[].assume-role` | | ECR only: a role ARN to assume, from the profile or the default chain |
+| `registries[].external-id` | | ECR only: the external ID `assume-role` requires, if any |
 | `registries[].projects` | `[]` | Google Cloud projects whose Artifact Registry repositories are listed |
 | `registries[].include-repos` | all | Crawl only repos matching one of these globs |
 | `registries[].exclude-repos` | `[]` | Skip repos matching one of these globs |

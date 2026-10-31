@@ -32,6 +32,10 @@ type IndexStatus struct {
 	LastRefresh *RefreshStats `json:"last_refresh,omitempty"`
 	// Error is why the last index failed.
 	Error string `json:"error,omitempty"`
+	// RefreshError is why the last refresh failed, so the UI can say so
+	// instead of waiting for views that will not come; a refresh that
+	// succeeds clears it.
+	RefreshError string `json:"refresh_error,omitempty"`
 }
 
 // status is the service's index state, shared with request handlers.

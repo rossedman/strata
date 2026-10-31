@@ -21,8 +21,10 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
 	"github.com/aws/aws-sdk-go-v2/service/ecr"
 	"github.com/aws/aws-sdk-go-v2/service/ecr/types"
+	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/google/go-containerregistry/pkg/authn"
 
 	"github.com/rossedman/strata/internal/crawl"
@@ -114,17 +116,44 @@ func (r *Registry) Manifests(ctx context.Context, repo string, digests []string)
 	return got, nil
 }
 
-// New returns a client for an ECR registry host, using the default AWS
-// credential chain: environment, shared config and SSO profiles, web
-// identity (EKS) and instance roles. The region comes from the host.
-func New(ctx context.Context, host string, opts ...func(*awsconfig.LoadOptions) error) (*Registry, error) {
+// Credentials pick the AWS identity for one registry, so registries in
+// different accounts can each use their own. Empty fields use the default
+// AWS credential chain.
+type Credentials struct {
+	// Profile is a named profile from the shared AWS config, such as an
+	// SSO profile for the account that owns the registry.
+	Profile string
+	// RoleARN is a role to assume, starting from the profile or the
+	// default chain, such as a read-only role in the registry's account.
+	RoleARN string
+	// ExternalID is passed when assuming RoleARN, if the role requires it.
+	ExternalID string
+}
+
+// New returns a client for an ECR registry host. Credentials come from
+// creds, falling back to the default AWS credential chain: environment,
+// shared config and SSO profiles, web identity (EKS) and instance roles.
+// The region comes from the host.
+func New(ctx context.Context, host string, creds Credentials, opts ...func(*awsconfig.LoadOptions) error) (*Registry, error) {
 	account, region, ok := ParseHost(host)
 	if !ok {
 		return nil, fmt.Errorf("%s is not an ECR registry host", host)
 	}
-	cfg, err := awsconfig.LoadDefaultConfig(ctx, append([]func(*awsconfig.LoadOptions) error{awsconfig.WithRegion(region)}, opts...)...)
+	load := []func(*awsconfig.LoadOptions) error{awsconfig.WithRegion(region)}
+	if creds.Profile != "" {
+		load = append(load, awsconfig.WithSharedConfigProfile(creds.Profile))
+	}
+	cfg, err := awsconfig.LoadDefaultConfig(ctx, append(load, opts...)...)
 	if err != nil {
-		return nil, fmt.Errorf("load AWS config: %w", err)
+		return nil, fmt.Errorf("load AWS config for %s: %w", host, err)
+	}
+	if creds.RoleARN != "" {
+		cfg.Credentials = aws.NewCredentialsCache(stscreds.NewAssumeRoleProvider(sts.NewFromConfig(cfg), creds.RoleARN, func(o *stscreds.AssumeRoleOptions) {
+			o.RoleSessionName = "strata"
+			if creds.ExternalID != "" {
+				o.ExternalID = aws.String(creds.ExternalID)
+			}
+		}))
 	}
 	return NewWithAPI(ctx, host, account, ecr.NewFromConfig(cfg)), nil
 }

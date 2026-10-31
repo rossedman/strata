@@ -158,21 +158,22 @@ func reindexLoop(ctx context.Context, svc *service.Service, every time.Duration)
 	t := time.NewTicker(every)
 	defer t.Stop()
 	for {
-		for _, r := range state.Config.Registries {
-			if ctx.Err() != nil {
-				return
+		all, err := registryOptions(ctx, state.Config.Registries)
+		if err != nil && ctx.Err() == nil {
+			state.Logger.Error("index failed", "err", err)
+		}
+		for i, r := range state.Config.Registries {
+			if ctx.Err() != nil || err != nil {
+				break
 			}
-			opts, err := crawlOptions(ctx, r)
-			if err == nil {
-				opts.External = state.Config.External
-				var res service.IndexResult
-				if res, err = svc.Index(ctx, opts); err == nil {
-					state.Logger.Info("indexed", "registry", r.Host, "new_images", res.Crawl.Images, "tag_moves", res.Crawl.TagMoves)
-					continue
-				}
-			}
-			if ctx.Err() == nil {
-				state.Logger.Error("index failed", "registry", r.Host, "err", err)
+			opts := all[i]
+			opts.External = state.Config.External
+			res, ierr := svc.Index(ctx, opts)
+			switch {
+			case ierr == nil:
+				state.Logger.Info("indexed", "registry", r.Host, "new_images", res.Crawl.Images, "tag_moves", res.Crawl.TagMoves)
+			case ctx.Err() == nil:
+				state.Logger.Error("index failed", "registry", r.Host, "err", ierr)
 			}
 		}
 		select {
