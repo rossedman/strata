@@ -175,6 +175,15 @@ func declaredEdges(opts Options) []string {
 			WHERE l.labels['org.opencontainers.image.base.digest'] IS NOT NULL
 			   OR l.labels['org.opencontainers.image.base.name'] IS NOT NULL`,
 	}
+	// BuildKit provenance lists every image a build pulled: the FROM image
+	// of each stage. Its digest names the exact version, even after the
+	// tag moved.
+	stmts = append(stmts, `INSERT INTO declared
+		SELECT digest,
+			CASE WHEN base_digest = '' THEN ref ELSE regexp_replace(ref, ':[^:/]+$', '') || '@' || base_digest END,
+			'`+model.SourceAttestation+`',
+			'provenance: ' || ref || CASE WHEN base_digest = '' THEN '' ELSE '@' || base_digest END
+		FROM base_refs`)
 	for _, key := range opts.Labels {
 		k := quote(key)
 		stmts = append(stmts, `INSERT INTO declared
@@ -188,9 +197,13 @@ func declaredEdges(opts Options) []string {
 			SELECT child, ref, source, evidence, ref AS candidate FROM declared
 			UNION ALL SELECT child, ref, source, evidence, 'docker.io/' || ref FROM declared WHERE ref NOT LIKE '%/%/%' AND ref LIKE '%/%'
 			UNION ALL SELECT child, ref, source, evidence, 'docker.io/library/' || ref FROM declared WHERE ref NOT LIKE '%/%'`,
+		// Provenance names every stage's image, so an attestation edge is
+		// kept only when the parent's layers start the child's: that is
+		// the stage the image was built from, not a builder stage.
 		`INSERT OR IGNORE INTO new_edges
+			SELECT x.child, x.parent, x.source, x.confidence, x.evidence FROM (
 			SELECT d.child, coalesce(m.digest, i.digest, ti.digest, tm.digest) AS parent, d.source,
-				'`+model.ConfidenceDeclared+`', d.evidence
+				'`+model.ConfidenceDeclared+`' AS confidence, d.evidence
 			FROM declared_refs d
 			JOIN images c ON c.digest = d.child
 			LEFT JOIN images i ON i.digest = d.candidate OR i.repo || '@' || i.digest = d.candidate
@@ -201,7 +214,10 @@ func declaredEdges(opts Options) []string {
 			LEFT JOIN index_manifests tm ON tm.index_digest = t.digest
 				AND tm.os = c.os AND tm.arch = c.arch AND coalesce(tm.variant, '') = coalesce(c.variant, '')
 			WHERE coalesce(m.digest, i.digest, ti.digest, tm.digest) IS NOT NULL
-			  AND coalesce(m.digest, i.digest, ti.digest, tm.digest) <> d.child`,
+			  AND coalesce(m.digest, i.digest, ti.digest, tm.digest) <> d.child) x
+			WHERE x.source <> '`+model.SourceAttestation+`' OR EXISTS (
+				SELECT 1 FROM images p JOIN image_prefixes ip ON ip.digest = x.child AND ip.chain_id = p.top_chain_id
+				WHERE p.digest = x.parent)`,
 	)
 }
 

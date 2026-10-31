@@ -91,6 +91,22 @@ func Explain(w io.Writer, ex *service.Explanation) error {
 			b.WriteString(line + "\n")
 		}
 	}
+	if len(ex.Lineage.BuiltFrom) > 0 {
+		b.WriteString("  " + ui.Dim.Render("built from, by its provenance:") + "\n")
+		for _, bf := range ex.Lineage.BuiltFrom {
+			what := map[string]string{
+				"parent":  "the parent",
+				"stage":   "another build stage; the image does not start with its layers",
+				"pending": "not indexed yet; the next strata index fetches it",
+				"missing": "not available: " + bf.Reason,
+			}[bf.Status]
+			line := fmt.Sprintf("    %s  %s", bf.Ref, ui.Dim.Render(what))
+			if bf.Status == "missing" {
+				line = fmt.Sprintf("    %s  %s", bf.Ref, ui.Bad.Render(what))
+			}
+			b.WriteString(line + "\n")
+		}
+	}
 
 	if len(im.Labels) > 0 {
 		section("Labels and annotations")

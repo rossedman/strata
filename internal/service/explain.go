@@ -82,7 +82,10 @@ type LineageInfo struct {
 	Descendants int          `json:"descendants"`
 	Conflict    bool         `json:"conflict"`
 	Edges       []graph.Edge `json:"edges"`
-	Ancestry    *graph.Graph `json:"ancestry"`
+	// BuiltFrom are the images the build's provenance says it pulled,
+	// with whether each is indexed, so a missing parent can be explained.
+	BuiltFrom []BuiltFrom  `json:"built_from,omitempty"`
+	Ancestry  *graph.Graph `json:"ancestry"`
 }
 
 // Explanation answers "what is this image, and where did it come from?".
@@ -211,6 +214,55 @@ func unsorted(v any) []string {
 	return out
 }
 
+// BuiltFrom is one image a build pulled, by its provenance.
+type BuiltFrom struct {
+	Ref    string `json:"ref"`
+	Digest string `json:"digest,omitempty"`
+	// Status is parent (the image is built on it), stage (indexed, but
+	// another build stage's image: the image does not start with its
+	// layers), missing (strata could not fetch it; Reason says why) or
+	// pending (the next index fetches it).
+	Status string `json:"status"`
+	Reason string `json:"reason,omitempty"`
+}
+
+// builtFrom reads an image's provenance bases and where each stands.
+func (s *Service) builtFrom(ctx context.Context, digest string) ([]BuiltFrom, error) {
+	rows, err := s.db().QueryContext(ctx, `
+		SELECT b.ref, b.base_digest,
+			EXISTS (SELECT 1 FROM edges e WHERE e.child = b.digest AND e.source = 'attestation'
+				AND (e.parent = b.base_digest OR e.parent IN (SELECT digest FROM index_manifests WHERE index_digest = b.base_digest))),
+			b.base_digest IN (SELECT digest FROM images) OR b.base_digest IN (SELECT index_digest FROM index_manifests),
+			f.error
+		FROM base_refs b LEFT JOIN base_fetches f ON f.base_digest = b.base_digest
+		WHERE b.digest = ? ORDER BY b.ref`, digest)
+	if err != nil {
+		return nil, fmt.Errorf("read provenance: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []BuiltFrom
+	for rows.Next() {
+		var b BuiltFrom
+		var parent, indexed bool
+		var fetchErr sql.NullString
+		if err := rows.Scan(&b.Ref, &b.Digest, &parent, &indexed, &fetchErr); err != nil {
+			return nil, err
+		}
+		switch {
+		case parent:
+			b.Status = "parent"
+		case indexed:
+			b.Status = "stage"
+		case fetchErr.Valid:
+			b.Status, b.Reason = "missing", fetchErr.String
+		default:
+			b.Status = "pending"
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+
 // lineageInfo fills in the parent chain and every edge with provenance.
 func (s *Service) lineageInfo(ctx context.Context, digest string, li *LineageInfo) error {
 	var parent, root sql.NullString
@@ -226,6 +278,9 @@ func (s *Service) lineageInfo(ctx context.Context, digest string, li *LineageInf
 		return err
 	}
 	li.Edges = edges
+	if li.BuiltFrom, err = s.builtFrom(ctx, digest); err != nil {
+		return err
+	}
 	g, err := s.ancestryGraph(ctx, digest)
 	if err != nil {
 		return err

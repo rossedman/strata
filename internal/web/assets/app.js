@@ -441,13 +441,19 @@
     });
     svg += "</svg>";
     var sources = (li.edges || []).map(function (e) { return e.source + (e.conflict ? " (conflicts with layers)" : ""); });
+    var BF = { parent: "the parent", stage: "another build stage", pending: "not indexed yet; the next index fetches it", missing: "not available" };
+    var built = (li.built_from || []).map(function (b) {
+      return '<li><i class="dot" style="background:' + (b.status === "missing" ? "var(--conflict)" : b.status === "parent" ? COL.fresh : "#6b6880") + '"></i><span><b class="mono">' + esc(nice(b.ref)) + "</b> " +
+        esc(BF[b.status] || b.status) + (b.reason ? ': <span class="mono">' + esc(b.reason) + "</span>" : "") + "</span></li>";
+    }).join("");
     var labels = Object.keys(im.labels || {}).sort();
     el.innerHTML =
       '<div class="imghead"><div style="min-width:0"><h1>' + esc(nice(im.label)) + '</h1><div class="digest">' + esc(im.repo) + "@" + esc(im.digest) + "</div></div>" + cmdHTML("strata explain " + (im.tags && im.tags.length ? im.tags[0] : im.repo + "@" + im.digest)) + "</div>" +
       '<div class="panel"><header><h2>Staleness</h2><span class="pill"><i class="dot" style="background:' + (COL[v] || "#6b6880") + '"></i>' + esc(v || "not computed") + '</span></header><div class="body"><ul class="reasons">' +
       ((st.reasons && st.reasons.length) ? st.reasons.map(function (r) { return '<li><i class="dot" style="background:' + (COL[v] || "#8e8aa6") + '"></i><span>' + esc(r) + "</span></li>"; }).join("") : '<li><i class="dot" style="background:' + COL.fresh + '"></i><span>On its current base, tagged, and nothing in its labels says otherwise.</span></li>') + "</ul></div></div>" +
       '<div class="panel"><header><h2>Ancestry</h2>' + (li.parent ? '<button type="button" class="chip" data-focus="' + esc(li.parent) + '">Open parent in Lineage</button>' : "") + '</header><div class="body chain">' + (chain.length > 1 ? svg : '<p class="sub">' + (li.status === "unknown" ? "Lineage unknown: one layer and no declared base, as with squashed or FROM scratch images." : "This image is a root: no indexed image is a prefix of its layers.") + "</p>") +
-      (sources.length || li.descendants ? '<p class="sub" style="margin-top:10px">' + [sources.length ? "Parent evidence: " + esc(sources.join(", ")) : "", li.descendants ? fmt(li.descendants) + " image" + (li.descendants === 1 ? " is" : "s are") + " built on this one" : ""].filter(Boolean).join(" · ") + "</p>" : "") + "</div></div>" +
+      (sources.length || li.descendants ? '<p class="sub" style="margin-top:10px">' + [sources.length ? "Parent evidence: " + esc(sources.join(", ")) : "", li.descendants ? fmt(li.descendants) + " image" + (li.descendants === 1 ? " is" : "s are") + " built on this one" : ""].filter(Boolean).join(" · ") + "</p>" : "") +
+      (built ? '<p class="sub" style="margin-top:10px">Built from, by its build provenance:</p><ul class="reasons" style="margin-top:6px">' + built + "</ul>" : "") + "</div></div>" +
       '<div class="grid2"><div class="panel"><header><h2>Layers</h2><span class="pct">' + im.layer_count + " layers · " + bytes(im.size) + '</span></header><div class="rtable"><table class="layers"><thead><tr><th class="r">#</th><th class="r">Size</th><th>Built by</th><th class="r">Shared by</th></tr></thead><tbody>' +
       ex.layers.map(function (l) { return '<tr><td class="r num">' + l.position + '</td><td class="r num">' + bytes(l.size) + "</td><td>" + esc(l.created_by || "—") + '</td><td class="r num">' + short(l.shared_by) + "</td></tr>"; }).join("") + "</tbody></table></div></div>" +
       '<div class="panel"><header><h2>Image</h2></header><div class="body"><dl class="kv">' +

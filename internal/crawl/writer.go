@@ -75,6 +75,7 @@ func (w *writer) add(ctx context.Context, b *store.Batch, repo string) error {
 	p.DeleteTags = append(p.DeleteTags, b.DeleteTags...)
 	p.Events = append(p.Events, b.Events...)
 	p.Pushes = append(p.Pushes, b.Pushes...)
+	p.BaseRefs = append(p.BaseRefs, b.BaseRefs...)
 	if repo != "" {
 		p.Done = append(p.Done, repo)
 	}

@@ -147,6 +147,15 @@ Harbor (--provider harbor). That needs no request per tag, records push times
 // newECR opens an ECR registry client; tests replace it.
 var newECR = func(ctx context.Context, host string) (*ecr.Registry, error) { return ecr.New(ctx, host) }
 
+// indexedHosts returns the hosts of the configured registries.
+func indexedHosts() []string {
+	var out []string
+	for _, r := range state.Config.Registries {
+		out = append(out, r.Host)
+	}
+	return out
+}
+
 // crawlOptions builds crawl options from a registry entry and the config.
 func crawlOptions(ctx context.Context, r config.Registry) (crawl.Options, error) {
 	v := state.V
@@ -161,6 +170,9 @@ func crawlOptions(ctx context.Context, r config.Registry) (crawl.Options, error)
 		RequestsPerSecond: r.Rate,
 		Insecure:          r.Insecure,
 		Referrers:         v.GetBool("referrers"),
+		Provenance:        v.GetBool("provenance"),
+		FetchBases:        v.GetBool("fetch-bases"),
+		IndexedHosts:      indexedHosts(),
 		EnvAllowlist:      state.Config.EnvAllowlist,
 		Redactions:        append(append([]string{}, crawl.DefaultRedactions...), state.Config.Redactions...),
 		UserAgent:         "strata/" + cli.Version,
@@ -247,6 +259,8 @@ func init() {
 	f.Bool("insecure", false, "allow plain HTTP")
 	f.StringSlice("external", nil, "external base refs to fetch so roots resolve (repeatable)")
 	f.Bool("referrers", true, "fetch SBOMs, signatures and attestations")
+	f.Bool("provenance", true, "read BuildKit provenance, which names the base each image was built from")
+	f.Bool("fetch-bases", true, "fetch, by digest, bases provenance names that are not indexed, from any registry")
 	f.String("provider", "auto", "how to list the registry: auto, ecr, harbor, gar, acr or distribution")
 	f.StringSlice("project", nil, "Google Cloud projects to list Artifact Registry repositories in (repeatable)")
 	f.StringSlice("include-repo", nil, "crawl only repos matching this glob (repeatable; ** crosses path segments)")

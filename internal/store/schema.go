@@ -121,6 +121,21 @@ var schema = []string{
 		last_pulled TIMESTAMPTZ,
 		PRIMARY KEY (repo, digest)
 	)`,
+	// base_refs holds the bases builds say images started from, from
+	// BuildKit provenance. base_fetches records the bases strata tried to
+	// fetch by digest, and why a fetch failed.
+	`CREATE TABLE IF NOT EXISTS base_refs (
+		digest      VARCHAR,
+		ref         VARCHAR,
+		base_digest VARCHAR,
+		PRIMARY KEY (digest, ref, base_digest)
+	)`,
+	`CREATE TABLE IF NOT EXISTS base_fetches (
+		base_digest VARCHAR PRIMARY KEY,
+		ref         VARCHAR,
+		error       VARCHAR,
+		tried_at    TIMESTAMPTZ
+	)`,
 	`CREATE TABLE IF NOT EXISTS edges (
 		child      VARCHAR,
 		parent     VARCHAR,

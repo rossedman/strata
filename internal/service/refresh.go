@@ -181,7 +181,8 @@ func (s *Service) lineageFingerprint(ctx context.Context) (string, error) {
 	err := s.db().QueryRowContext(ctx, `SELECT
 		(SELECT count(*) || ':' || coalesce(max(indexed_at)::VARCHAR, '') FROM images) || '|' ||
 		(SELECT count(*) || ':' || coalesce(bit_xor(hash(repo, tag, digest)), 0) FROM tags) || '|' ||
-		(SELECT count(*) || ':' || coalesce(bit_xor(hash(index_digest, digest)), 0) FROM index_manifests)`).Scan(&fp)
+		(SELECT count(*) || ':' || coalesce(bit_xor(hash(index_digest, digest)), 0) FROM index_manifests) || '|' ||
+		(SELECT count(*) || ':' || coalesce(bit_xor(hash(digest, ref, base_digest)), 0) FROM base_refs)`).Scan(&fp)
 	if err != nil {
 		return "", fmt.Errorf("lineage fingerprint: %w", err)
 	}

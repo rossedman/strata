@@ -50,6 +50,16 @@ type Options struct {
 	Insecure bool
 	// Referrers fetches SBOMs, signatures and attestations per image.
 	Referrers bool
+	// Provenance reads the SLSA provenance BuildKit attaches to images,
+	// which names the images a build started from.
+	Provenance bool
+	// FetchBases fetches, by digest, the base images provenance names
+	// that are not indexed, so lineage can walk up to them even when they
+	// live in another registry or their tag has since moved.
+	FetchBases bool
+	// IndexedHosts are the registries the index crawls. A base fetched
+	// from one of them is not marked external.
+	IndexedHosts []string
 	// EnvAllowlist names environment variables whose values are safe to
 	// store.
 	EnvAllowlist []string
@@ -89,6 +99,10 @@ type Stats struct {
 	TagMoves   int64 `json:"tag_moves"`
 	Requests   int64 `json:"requests"`
 	Referrers  int64 `json:"referrers"`
+	// BasesFetched counts bases fetched by digest because provenance
+	// named them; BasesMissing counts those that could not be.
+	BasesFetched int64 `json:"bases_fetched"`
+	BasesMissing int64 `json:"bases_missing"`
 	// Filtered counts what the filter skipped before fetching it.
 	ReposFiltered  int64 `json:"repos_filtered"`
 	TagsFiltered   int64 `json:"tags_filtered"`
@@ -230,7 +244,12 @@ func Crawl(ctx context.Context, st *store.Store, opts Options) (Stats, error) {
 		}
 	}
 	for _, ref := range opts.External {
-		if err := c.crawlExternal(ctx, ref); err != nil {
+		if err := c.crawlExternal(ctx, ref, true); err != nil {
+			return c.stats, err
+		}
+	}
+	if opts.FetchBases {
+		if err := c.fetchBases(ctx); err != nil {
 			return c.stats, err
 		}
 	}
@@ -364,6 +383,7 @@ type tagResult struct {
 	images []*model.Image
 	index  []model.IndexEntry
 	refs   []model.Referrer
+	bases  []model.BaseRef
 }
 
 // crawlRepo lists a repo's tags, records every tag that moved, and fetches
@@ -460,6 +480,7 @@ func (c *crawler) crawlRepo(ctx context.Context, repo name.Repository) error {
 			batch.Images = append(batch.Images, res.images...)
 			batch.Index = append(batch.Index, res.index...)
 			batch.Referrers = append(batch.Referrers, res.refs...)
+			batch.BaseRefs = append(batch.BaseRefs, res.bases...)
 			atomic.AddInt64(&c.stats.Images, int64(len(res.images)))
 			atomic.AddInt64(&c.stats.Referrers, int64(len(res.refs)))
 			return flush()
@@ -666,7 +687,17 @@ func (c *crawler) fetch(ctx context.Context, repo name.Repository, digest v1.Has
 			return fmt.Errorf("read index %s: %w", ref, err)
 		}
 		for _, m := range im.Manifests {
-			if !m.MediaType.IsImage() || isAttestationManifest(m) {
+			if isAttestationManifest(m) {
+				if c.opts.Provenance {
+					bases, err := c.provenance(ctx, repo, m)
+					if err != nil {
+						c.opts.Logger.Debug("provenance unreadable", "ref", ref, "err", err)
+					}
+					res.bases = append(res.bases, bases...)
+				}
+				continue
+			}
+			if !m.MediaType.IsImage() {
 				continue
 			}
 			if m.Platform != nil && !c.match.platform(model.Platform{OS: m.Platform.OS, Arch: m.Platform.Architecture, Variant: m.Platform.Variant}) {
@@ -816,7 +847,7 @@ func (c *crawler) referrers(ctx context.Context, repo name.Repository, digest v1
 
 // crawlExternal fetches one base from outside the registry and marks it
 // external, so images built on it resolve to a named root.
-func (c *crawler) crawlExternal(ctx context.Context, s string) error {
+func (c *crawler) crawlExternal(ctx context.Context, s string, external bool) error {
 	ref, err := name.ParseReference(s, c.nameOpt...)
 	if err != nil {
 		return fmt.Errorf("external base %q: %w", s, err)
@@ -839,9 +870,9 @@ func (c *crawler) crawlExternal(ctx context.Context, s string) error {
 		}
 	}
 	for _, img := range res.images {
-		img.External = true
+		img.External = external
 	}
-	b := &store.Batch{Images: res.images, Index: res.index, Referrers: res.refs}
+	b := &store.Batch{Images: res.images, Index: res.index, Referrers: res.refs, BaseRefs: res.bases}
 	if t, ok := ref.(name.Tag); ok {
 		full := RepoName(repo)
 		prev, err := c.st.Tags(ctx, full)

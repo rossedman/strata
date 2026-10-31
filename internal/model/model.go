@@ -198,3 +198,26 @@ type Edge struct {
 	Confidence string `json:"confidence"`
 	Evidence   string `json:"evidence"`
 }
+
+// BaseRef is a base image a build says an image was built from, such as
+// a FROM image recorded in BuildKit provenance. Ref names it as
+// repo:tag, and BaseDigest is the digest the build resolved it to, which
+// may be a multi-platform index.
+type BaseRef struct {
+	Digest     string `json:"digest"`
+	Ref        string `json:"ref"`
+	BaseDigest string `json:"base_digest"`
+}
+
+// FetchRef returns the ref to fetch the base by: repo@digest when the
+// digest is known, else the ref.
+func (b BaseRef) FetchRef() string {
+	if b.BaseDigest == "" {
+		return b.Ref
+	}
+	repo := b.Ref
+	if i := strings.LastIndex(repo, ":"); i > strings.LastIndex(repo, "/") {
+		repo = repo[:i]
+	}
+	return repo + "@" + b.BaseDigest
+}
