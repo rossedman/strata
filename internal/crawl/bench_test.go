@@ -2,12 +2,15 @@ package crawl
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"maps"
 	"net/http"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -164,24 +167,54 @@ func BenchmarkCrawlLister(b *testing.B) {
 	})
 }
 
-// staticLister serves a listing built once, so it costs no requests.
+// staticLister serves a listing built once and fetches manifests in
+// batches, as the ECR API does. Its calls are counted as API calls; the
+// HTTP requests it makes to do so go around the crawl's transport, so they
+// are not counted twice.
 type staticLister struct {
+	host   string
 	repos  []string
 	images map[string][]Listed
+	calls  atomic.Int64
 }
 
 // Repos returns the listed repos.
-func (l *staticLister) Repos(context.Context) ([]string, error) { return l.repos, nil }
+func (l *staticLister) Repos(context.Context) ([]string, error) {
+	l.calls.Add(1)
+	return l.repos, nil
+}
 
 // Images returns a repo's listed images.
 func (l *staticLister) Images(_ context.Context, repo string) ([]Listed, error) {
+	l.calls.Add(1)
 	return l.images[repo], nil
 }
+
+// Manifests fetches manifests by digest.
+func (l *staticLister) Manifests(_ context.Context, repo string, digests []string) (map[string][]byte, error) {
+	l.calls.Add(1)
+	out := map[string][]byte{}
+	for _, d := range digests {
+		ref, err := name.NewDigest(l.host+"/"+repo+"@"+d, name.Insecure)
+		if err != nil {
+			return nil, err
+		}
+		desc, err := remote.Get(ref)
+		if err != nil {
+			return nil, err
+		}
+		out[d] = desc.Manifest
+	}
+	return out, nil
+}
+
+// Calls counts the API calls made.
+func (l *staticLister) Calls() int64 { return l.calls.Load() }
 
 // listing builds a static listing of the synthetic registry.
 func listing(tb testing.TB, r *testreg.Synthetic) *staticLister {
 	tb.Helper()
-	l := &staticLister{repos: r.RepoNames, images: map[string][]Listed{}}
+	l := &staticLister{host: r.Host, repos: r.RepoNames, images: map[string][]Listed{}}
 	for _, repo := range r.RepoNames {
 		ref, err := name.NewRepository(r.Host+"/"+repo, name.Insecure)
 		if err != nil {
@@ -255,7 +288,64 @@ func TestRequestBudget(t *testing.T) {
 	maps.Copy(again, tagLists)
 	check("re-crawl", crawl(s, nil), again)
 
+	// Through a listing that fetches manifests in batches, as for ECR, the
+	// only per-image request left is the config.
 	l := listing(t, r)
-	check("first crawl with a listing", crawl(fixture.Open(t, nil), l), fetches)
+	before := l.Calls()
+	check("first crawl with a listing", crawl(fixture.Open(t, nil), l), map[string]int{"blob": r.Manifests})
+	// One call to list repos, one to list each repo, one batch of tagged
+	// manifests per repo, and one batch of platform images per repo that
+	// holds multi-platform indexes.
+	multi := (8 + 3) / 4
+	if got, want := l.Calls()-before, int64(1+repos+repos+multi); got != want {
+		t.Errorf("first crawl with a listing: %d API calls, want %d", got, want)
+	}
+	before = l.Calls()
 	check("re-crawl with a listing", crawl(s, l), map[string]int{})
+	if got, want := l.Calls()-before, int64(1+repos); got != want {
+		t.Errorf("re-crawl with a listing: %d API calls, want %d", got, want)
+	}
+}
+
+// partialFetcher returns only every other manifest asked for, or fails.
+type partialFetcher struct {
+	*staticLister
+	fail bool
+}
+
+// Manifests drops half of what the listing would return.
+func (p *partialFetcher) Manifests(ctx context.Context, repo string, digests []string) (map[string][]byte, error) {
+	if p.fail {
+		return nil, errors.New("throttled")
+	}
+	got, err := p.staticLister.Manifests(ctx, repo, digests)
+	for i, d := range digests {
+		if i%2 == 1 {
+			delete(got, d)
+		}
+	}
+	return got, err
+}
+
+func TestBatchedManifestsFallBack(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	r := testreg.StartSynthetic(t, testreg.Shape{Repos: 6, Tags: 4, MultiArchEvery: 3, Bases: 2})
+	pc := &pathCounter{base: http.DefaultTransport, n: map[string]int{}}
+	o := benchOptions(r, 4, 0)
+	o.Transport = pc
+	o.Lister = &partialFetcher{staticLister: listing(t, r)}
+	stats, err := Crawl(ctx, fixture.Open(t, nil), o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Every image is indexed; the manifests the batch left out were
+	// fetched one by one.
+	if int(stats.Images) != r.Manifests || pc.n["GET manifest"] == 0 || pc.n["GET manifest"] >= r.Indexes+r.Manifests {
+		t.Fatalf("images = %d of %d, manifest requests = %d", stats.Images, r.Manifests, pc.n["GET manifest"])
+	}
+	o.Lister = &partialFetcher{staticLister: listing(t, r), fail: true}
+	if _, err := Crawl(ctx, fixture.Open(t, nil), o); err == nil || !strings.Contains(err.Error(), "fetch manifests: throttled") {
+		t.Fatalf("err = %v", err)
+	}
 }
