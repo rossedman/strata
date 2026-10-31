@@ -4,12 +4,13 @@
 //   #lineage            #lineage?focus=<row id>&stale=1
 //   #search?q=<filter>&team=a&verdict=stale&page=2
 //   #image?d=<digest>
+//   #cleanup            #cleanup?scope=repo&where=<filter>
 (function () {
   "use strict";
 
   var COL = { fresh: "#5fd39a", drifting: "#e8c84a", stale: "#f08a5d", abandoned: "#a3a3ad" };
   var V = ["fresh", "drifting", "stale", "abandoned"];
-  var VIEWS = ["overview", "lineage", "search", "image"];
+  var VIEWS = ["overview", "lineage", "search", "cleanup", "image"];
   var host = "";
 
   // ---------- helpers ----------
@@ -18,7 +19,7 @@
   function fmt(n) { return Math.round(n || 0).toLocaleString("en-US"); }
   function short(n) { n = n || 0; return n >= 1e6 ? (n / 1e6).toFixed(2) + "M" : n >= 1e4 ? (n / 1e3).toFixed(0) + "k" : n >= 1e3 ? (n / 1e3).toFixed(1) + "k" : String(n); }
   function bytes(n) { var u = ["B", "KiB", "MiB", "GiB", "TiB", "PiB"], i = 0; n = n || 0; while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; } return n.toFixed(i > 1 ? 1 : 0) + " " + u[i]; }
-  function nice(name) { name = name || ""; if (host && name.indexOf(host + "/") === 0) { name = name.slice(host.length + 1); } return name.replace(/^docker\.io\/library\//, ""); }
+  function nice(name) { name = name || ""; if (host && name.indexOf(host + "/") === 0) { name = name.slice(host.length + 1); } return name.replace(/^docker\.io\/library\//, "").replace(/@sha256:([0-9a-f]{12})[0-9a-f]{52}$/, "@$1"); }
   function ago(iso) {
     if (!iso) { return "—"; }
     var d = (Date.now() - new Date(iso).getTime()) / 864e5;
@@ -464,6 +465,58 @@
       "</dl>" + (ex.findings.length ? '<h2 style="margin-top:18px">Findings</h2><div class="find" style="margin-top:8px">' + ex.findings.map(function (f) { return "<div>" + esc(f) + "</div>"; }).join("") + "</div>" : "") + "</div></div></div>";
   }
 
+  // ---------- cleanup ----------
+  function exportLink(path, params, label) {
+    var u = new URL(path, location.href);
+    Object.keys(params).forEach(function (k) { if (params[k]) { u.searchParams.set(k, params[k]); } });
+    u.searchParams.set("format", "csv");
+    return '<a class="chip" href="' + esc(u.toString()) + '" download>' + esc(label) + "</a>";
+  }
+  function cleanupView(el, params) {
+    var scope = params.get("scope") === "repo" ? "repo" : "registry", where = params.get("where") || "";
+    el.innerHTML = '<div class="head"><div><h1>Cleanup</h1><p class="sub">Images safe to delete, abandoned by default: untagged, nothing built on them, not pulled in the policy window. Reclaimable counts each layer once, and only when no kept image still uses it. strata never deletes anything.</p></div>' +
+      cmdHTML("strata cleanup" + (where ? " --where '" + where.replace(/'/g, "'\\''") + "'" : "") + (scope === "repo" ? " --scope repo" : "") + " -o csv") + "</div>" +
+      '<form class="query" id="cform" style="max-width:760px"><input id="cwhere" type="text" value="' + esc(where) + '" placeholder=\'Candidates (default: stale = "abandoned")\' aria-label="Candidate filter"></form>' +
+      '<div class="chips"><button type="button" class="chip" data-scope="registry" aria-pressed="' + (scope === "registry") + '">Layers shared anywhere are kept</button><button type="button" class="chip" data-scope="repo" aria-pressed="' + (scope === "repo") + '">Layers are stored per repo</button></div>' +
+      '<p class="loading">Working out what can go…</p>';
+    $("cform").addEventListener("submit", function (ev) { ev.preventDefault(); var p = {}; if ($("cwhere").value.trim()) { p.where = $("cwhere").value.trim(); } if (scope === "repo") { p.scope = "repo"; } go("cleanup", p); });
+    var body = el.querySelector(".loading");
+    Promise.all([api("v1/cleanup", { where: where, scope: scope, limit: 100 }), api("v1/cleanup/lifecycle").catch(function () { return null; })]).then(function (r) {
+      var c = r[0], lcs = r[1] || [], maxR = Math.max.apply(null, c.repos.map(function (x) { return x.reclaimable_bytes; }).concat([1]));
+      var withPolicy = lcs.filter(function (l) { return l.policy; }).length, skipped = lcs.filter(function (l) { return !l.policy; });
+      body.outerHTML =
+        (notBuilt(lastStatus) ? pendingHTML(lastStatus) : "") +
+        '<div class="kpis">' + [
+          ["Reclaimable", bytes(c.reclaimable_bytes), "of " + bytes(c.size) + " the manifests state"],
+          ["Candidates", fmt(c.total), fmt(c.images) + " images"],
+          ["Repos", fmt(c.repos.length), "with candidates"],
+          ["Held back", fmt(c.held), "kept images are built on them or share their index"],
+          ["Export", exportLink("v1/cleanup", { where: where, scope: scope }, "Download CSV"), "every candidate"]
+        ].map(function (k) { return '<div class="kpi"><div class="k">' + k[0] + '</div><div class="v num">' + k[1] + '</div><div class="d">' + k[2] + "</div></div>"; }).join("") + "</div>" +
+        (c.total ? '<div class="grid2"><div class="panel"><header><h2>By repo</h2><span class="pct">freed by deleting that repo\'s candidates</span></header><div class="body"><div class="bars">' +
+          c.repos.slice(0, 15).map(function (x) {
+            return '<div class="bar" data-search-where="' + esc(x.repo) + '" role="button" tabindex="0"><span class="n"><em>' + esc(nice(x.repo)) + '</em></span><span class="c num">' + bytes(x.reclaimable_bytes) + " · " + fmt(x.candidates) + '</span><div class="mix"><i style="width:' + (100 * x.reclaimable_bytes / maxR).toFixed(1) + '%;background:var(--brand)"></i></div></div>';
+          }).join("") + "</div></div></div>" +
+          '<div class="panel"><header><h2>ECR lifecycle policies</h2>' + cmdHTML("strata cleanup lifecycle -o script") + '</header><div class="body"><p class="sub" style="margin:0 0 10px">One rule per repo expiring untagged images past the abandoned window, checked against the index first. ' +
+          fmt(withPolicy) + " of " + fmt(lcs.length) + " repos get a policy.</p>" +
+          (skipped.length ? '<ul class="changes">' + skipped.slice(0, 6).map(function (l) { return '<li><span class="when">skipped</span><span><b>' + esc(nice(l.repo)) + "</b> " + esc(l.skipped) + (l.conflicts.length ? ": " + esc(l.conflicts[0].reason) : "") + "</span></li>"; }).join("") + "</ul>" : "") + "</div></div></div>" +
+          '<div class="panel"><header><h2>Candidates</h2><span class="pct">' + (c.candidates.length < c.total ? "largest " + fmt(c.candidates.length) + " of " + fmt(c.total) + " · download the CSV for all" : "largest first") + '</span></header><div class="rtable"><table><thead><tr><th>Repo</th><th>Digest</th><th class="r">Images</th><th class="r">Size</th><th class="r">Frees alone</th><th class="r">Pushed</th><th class="r">Last pull</th><th>Why</th></tr></thead><tbody>' +
+          c.candidates.map(function (x) {
+            return '<tr data-href="#image?d=' + encodeURIComponent(x.digest) + '"><td>' + esc(nice(x.repo)) + '</td><td class="mono">' + esc(x.digest.slice(7, 19)) + '</td><td class="r num">' + fmt(x.images) + '</td><td class="r num">' + bytes(x.size) + '</td><td class="r num">' + bytes(x.exclusive_bytes) + '</td><td class="r num">' + (x.pushed_days == null ? "—" : x.pushed_days + "d ago") + '</td><td class="r num">' + (x.last_pulled_days == null ? "never" : x.last_pulled_days + "d ago") + '</td><td class="trunc pct" title="' + esc(x.reason) + '">' + esc(x.reason || "—") + "</td></tr>";
+          }).join("") + "</tbody></table></div></div>"
+          : '<div class="panel"><div class="body"><p class="empty-state">No candidates' + (where ? " match this filter" : ": nothing is abandoned") + ".</p></div></div>");
+    }).catch(function (e) {
+      if (e.status === 400) { body.outerHTML = '<p class="qerr">' + esc(e.message) + "</p>"; return; }
+      body.outerHTML = '<p class="loading err">Could not load cleanup candidates: ' + esc(e.message) + "</p>";
+    });
+  }
+  document.addEventListener("click", function (e) {
+    var b = e.target.closest("[data-scope]");
+    if (b) { var p = parseHash().params; p.set("scope", b.getAttribute("data-scope")); location.hash = "#cleanup?" + p.toString(); return; }
+    var r = e.target.closest("[data-search-where]");
+    if (r) { go("cleanup", { where: (parseHash().params.get("where") || 'stale = "abandoned"') + ' and repo = "' + r.getAttribute("data-search-where") + '"' }); }
+  });
+
   // ---------- routing ----------
   function route() {
     var r = parseHash();
@@ -474,6 +527,7 @@
     if (r.view === "overview") { overview(el); }
     if (r.view === "lineage") { lineageView(el, r.params); }
     if (r.view === "search") { searchView(el, r.params); }
+    if (r.view === "cleanup") { cleanupView(el, r.params); }
     if (r.view === "image") { imageView(el, r.params); }
     if (r.view !== "search") { $("q").value = ""; }
   }

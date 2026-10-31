@@ -430,6 +430,111 @@ paths:
                   $ref: "#/components/schemas/OutlineRow"
         default:
           $ref: "#/components/responses/Error"
+  /v1/cleanup:
+    get:
+      operationId: getCleanup
+      summary: Images safe to delete and the storage deleting them frees
+      description: |
+        Deletion candidates: images matching `where` (abandoned ones by
+        default), whole multi-platform indexes only, leaving out any a kept
+        image is built on. `reclaimable_bytes` counts each layer once and
+        only when no kept image uses it. `format=csv` exports every
+        candidate.
+      tags: [reports]
+      parameters:
+        - name: where
+          in: query
+          required: false
+          description: Select candidates with the query language; empty means stale = "abandoned"
+          schema:
+            type: string
+        - name: scope
+          in: query
+          required: false
+          description: Count a layer as freed when no kept image in the registry, or in the same repo, uses it
+          schema:
+            type: string
+            enum: [registry, repo]
+            default: registry
+        - name: limit
+          in: query
+          required: false
+          description: Most candidates to list, largest first; totals count them all. 0 lists all.
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: format
+          in: query
+          required: false
+          description: json, or csv to export every candidate
+          schema:
+            type: string
+            enum: [json, csv]
+            default: json
+      responses:
+        "200":
+          description: The deletion candidates
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Cleanup"
+            text/csv:
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        default:
+          $ref: "#/components/responses/Error"
+  /v1/cleanup/lifecycle:
+    get:
+      operationId: getLifecycles
+      summary: ECR lifecycle policies that expire what strata calls abandoned
+      description: |
+        One policy per repo expiring untagged images pushed more than the
+        staleness policy's abandoned window ago, checked against the index.
+        A repo where the rule would expire an image strata keeps gets no
+        policy unless `include_conflicts` is set.
+      tags: [reports]
+      parameters:
+        - name: repo
+          in: query
+          required: false
+          description: Only repos matching these globs, with the host
+          style: form
+          explode: true
+          schema:
+            type: array
+            items:
+              type: string
+        - name: days
+          in: query
+          required: false
+          description: Expire untagged images pushed more than this many days ago; 0 uses the policy
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: include_conflicts
+          in: query
+          required: false
+          description: Write a repo's rule even when it would expire images strata keeps
+          schema:
+            type: boolean
+            default: false
+      responses:
+        "200":
+          description: A policy, or why there is none, per repo
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Lifecycle"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        default:
+          $ref: "#/components/responses/Error"
 components:
   parameters:
     Ref:
@@ -1141,6 +1246,95 @@ components:
         repos_filtered: { type: integer, format: int64 }
         tags_filtered: { type: integer, format: int64 }
         images_filtered: { type: integer, format: int64 }
+    Cleanup:
+      description: "Deletion candidates and what deleting them frees"
+      type: object
+      required: [where, scope, candidates, repos, total, images, size, reclaimable_bytes, held]
+      properties:
+        where: { type: string }
+        scope: { type: string, enum: [registry, repo] }
+        candidates:
+          type: array
+          items:
+            $ref: "#/components/schemas/CleanupCandidate"
+        repos:
+          type: array
+          items:
+            $ref: "#/components/schemas/CleanupRepo"
+        total: { type: integer, description: "Candidates: manifests or whole indexes" }
+        images: { type: integer, description: "Platform images in the candidates" }
+        size: { type: integer, format: int64, description: "Sizes the manifests state, a shared layer counted per image" }
+        reclaimable_bytes: { type: integer, format: int64, description: "Layers freed, each once, none a kept image uses" }
+        held: { type: integer, description: "Matching images kept because kept images are built on them or share their index" }
+    CleanupCandidate:
+      description: "A manifest or index that can be deleted"
+      type: object
+      required: [digest, repo, images, size, exclusive_bytes, verdict, reason, pushed_days, last_pulled_days]
+      properties:
+        digest: { type: string }
+        repo: { type: string }
+        images: { type: integer }
+        size: { type: integer, format: int64 }
+        exclusive_bytes: { type: integer, format: int64, description: "Freed by deleting this candidate alone" }
+        verdict: { type: string }
+        reason: { type: string }
+        pushed_days: { type: integer, nullable: true }
+        last_pulled_days: { type: integer, nullable: true }
+    CleanupRepo:
+      description: "Candidates of one repo"
+      type: object
+      required: [repo, candidates, size, reclaimable_bytes]
+      properties:
+        repo: { type: string }
+        candidates: { type: integer }
+        size: { type: integer, format: int64 }
+        reclaimable_bytes: { type: integer, format: int64 }
+    Lifecycle:
+      description: "A generated ECR lifecycle policy for one repo, checked against the index"
+      type: object
+      required: [repo, name, days, expires, agree, conflicts, policy]
+      properties:
+        repo: { type: string }
+        name: { type: string, description: "The repository name ECR uses, without the host" }
+        days: { type: integer }
+        expires: { type: integer, description: "Images the rule would expire today" }
+        agree: { type: integer, description: "Of those, images strata lists for cleanup" }
+        conflicts:
+          type: array
+          items:
+            type: object
+            required: [digest, reason]
+            properties:
+              digest: { type: string }
+              reason: { type: string }
+        policy:
+          nullable: true
+          description: "The lifecycle policy document, or null when the repo is skipped"
+          type: object
+          required: [rules]
+          properties:
+            rules:
+              type: array
+              items:
+                type: object
+                required: [rulePriority, description, selection, action]
+                properties:
+                  rulePriority: { type: integer }
+                  description: { type: string }
+                  selection:
+                    type: object
+                    required: [tagStatus, countType, countNumber]
+                    properties:
+                      tagStatus: { type: string }
+                      countType: { type: string }
+                      countUnit: { type: string }
+                      countNumber: { type: integer }
+                  action:
+                    type: object
+                    required: [type]
+                    properties:
+                      type: { type: string }
+        skipped: { type: string, description: "Why the repo has no policy" }
     RefreshStats:
       description: "What the last refresh rewrote; refreshes are incremental"
       type: object

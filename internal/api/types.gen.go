@@ -52,6 +52,24 @@ func (e BaseVersionSource) Valid() bool {
 	}
 }
 
+// Defines values for CleanupScope.
+const (
+	CleanupScopeRegistry CleanupScope = "registry"
+	CleanupScopeRepo     CleanupScope = "repo"
+)
+
+// Valid indicates whether the value is a known member of the CleanupScope enum.
+func (e CleanupScope) Valid() bool {
+	switch e {
+	case CleanupScopeRegistry:
+		return true
+	case CleanupScopeRepo:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for EdgeConfidence.
 const (
 	EdgeConfidenceDeclared EdgeConfidence = "declared"
@@ -265,6 +283,42 @@ func (e Verdict) Valid() bool {
 	}
 }
 
+// Defines values for GetCleanupParamsScope.
+const (
+	GetCleanupParamsScopeRegistry GetCleanupParamsScope = "registry"
+	GetCleanupParamsScopeRepo     GetCleanupParamsScope = "repo"
+)
+
+// Valid indicates whether the value is a known member of the GetCleanupParamsScope enum.
+func (e GetCleanupParamsScope) Valid() bool {
+	switch e {
+	case GetCleanupParamsScopeRegistry:
+		return true
+	case GetCleanupParamsScopeRepo:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GetCleanupParamsFormat.
+const (
+	Csv  GetCleanupParamsFormat = "csv"
+	Json GetCleanupParamsFormat = "json"
+)
+
+// Valid indicates whether the value is a known member of the GetCleanupParamsFormat enum.
+func (e GetCleanupParamsFormat) Valid() bool {
+	switch e {
+	case Csv:
+		return true
+	case Json:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for SearchParamsAge.
 const (
 	SearchParamsAgeGreaterThan1Year SearchParamsAge = "> 1 year"
@@ -343,6 +397,55 @@ type Change struct {
 	Kind   string  `json:"kind"`
 	Metric *string `json:"metric,omitempty"`
 	To     float32 `json:"to"`
+}
+
+// Cleanup Deletion candidates and what deleting them frees
+type Cleanup struct {
+	Candidates []CleanupCandidate `json:"candidates"`
+
+	// Held Matching images kept because kept images are built on them or share their index
+	Held int `json:"held"`
+
+	// Images Platform images in the candidates
+	Images int `json:"images"`
+
+	// ReclaimableBytes Layers freed, each once, none a kept image uses
+	ReclaimableBytes int64         `json:"reclaimable_bytes"`
+	Repos            []CleanupRepo `json:"repos"`
+	Scope            CleanupScope  `json:"scope"`
+
+	// Size Sizes the manifests state, a shared layer counted per image
+	Size int64 `json:"size"`
+
+	// Total Candidates: manifests or whole indexes
+	Total int    `json:"total"`
+	Where string `json:"where"`
+}
+
+// CleanupScope defines model for Cleanup.Scope.
+type CleanupScope string
+
+// CleanupCandidate A manifest or index that can be deleted
+type CleanupCandidate struct {
+	Digest string `json:"digest"`
+
+	// ExclusiveBytes Freed by deleting this candidate alone
+	ExclusiveBytes int64  `json:"exclusive_bytes"`
+	Images         int    `json:"images"`
+	LastPulledDays *int   `json:"last_pulled_days"`
+	PushedDays     *int   `json:"pushed_days"`
+	Reason         string `json:"reason"`
+	Repo           string `json:"repo"`
+	Size           int64  `json:"size"`
+	Verdict        string `json:"verdict"`
+}
+
+// CleanupRepo Candidates of one repo
+type CleanupRepo struct {
+	Candidates       int    `json:"candidates"`
+	ReclaimableBytes int64  `json:"reclaimable_bytes"`
+	Repo             string `json:"repo"`
+	Size             int64  `json:"size"`
 }
 
 // ConfigInfo Run-time fields from the image config; environment values are never stored except allowlisted ones
@@ -546,6 +649,44 @@ type LayerInfo struct {
 	Position   int    `json:"position"`
 	SharedBy   int    `json:"shared_by"`
 	Size       int64  `json:"size"`
+}
+
+// Lifecycle A generated ECR lifecycle policy for one repo, checked against the index
+type Lifecycle struct {
+	// Agree Of those, images strata lists for cleanup
+	Agree     int `json:"agree"`
+	Conflicts []struct {
+		Digest string `json:"digest"`
+		Reason string `json:"reason"`
+	} `json:"conflicts"`
+	Days int `json:"days"`
+
+	// Expires Images the rule would expire today
+	Expires int `json:"expires"`
+
+	// Name The repository name ECR uses, without the host
+	Name string `json:"name"`
+
+	// Policy The lifecycle policy document, or null when the repo is skipped
+	Policy *struct {
+		Rules []struct {
+			Action struct {
+				Type string `json:"type"`
+			} `json:"action"`
+			Description  string `json:"description"`
+			RulePriority int    `json:"rulePriority"`
+			Selection    struct {
+				CountNumber int     `json:"countNumber"`
+				CountType   string  `json:"countType"`
+				CountUnit   *string `json:"countUnit,omitempty"`
+				TagStatus   string  `json:"tagStatus"`
+			} `json:"selection"`
+		} `json:"rules"`
+	} `json:"policy"`
+	Repo string `json:"repo"`
+
+	// Skipped Why the repo has no policy
+	Skipped *string `json:"skipped,omitempty"`
 }
 
 // LineageInfo Where an image sits in the lineage graph, with the evidence for its parent
@@ -820,6 +961,39 @@ type GetAncestryParams struct {
 
 	// Platform Platform to pick when the ref names a multi-platform index, such as linux/arm64
 	Platform *Platform `form:"platform,omitempty" json:"platform,omitempty"`
+}
+
+// GetCleanupParams defines parameters for GetCleanup.
+type GetCleanupParams struct {
+	// Where Select candidates with the query language; empty means stale = "abandoned"
+	Where *string `form:"where,omitempty" json:"where,omitempty"`
+
+	// Scope Count a layer as freed when no kept image in the registry, or in the same repo, uses it
+	Scope *GetCleanupParamsScope `form:"scope,omitempty" json:"scope,omitempty"`
+
+	// Limit Most candidates to list, largest first; totals count them all. 0 lists all.
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Format json, or csv to export every candidate
+	Format *GetCleanupParamsFormat `form:"format,omitempty" json:"format,omitempty"`
+}
+
+// GetCleanupParamsScope defines parameters for GetCleanup.
+type GetCleanupParamsScope string
+
+// GetCleanupParamsFormat defines parameters for GetCleanup.
+type GetCleanupParamsFormat string
+
+// GetLifecyclesParams defines parameters for GetLifecycles.
+type GetLifecyclesParams struct {
+	// Repo Only repos matching these globs, with the host
+	Repo *[]string `form:"repo,omitempty" json:"repo,omitempty"`
+
+	// Days Expire untagged images pushed more than this many days ago; 0 uses the policy
+	Days *int `form:"days,omitempty" json:"days,omitempty"`
+
+	// IncludeConflicts Write a repo's rule even when it would expire images strata keeps
+	IncludeConflicts *bool `form:"include_conflicts,omitempty" json:"include_conflicts,omitempty"`
 }
 
 // GetDescendantsParams defines parameters for GetDescendants.

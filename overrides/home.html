@@ -108,7 +108,7 @@
         <article class="lp-way" style="--accent: var(--brand)">
           <div class="lp-icon">{% include ".icons/material/monitor-dashboard.svg" %}</div>
           <h3>Web UI</h3><div class="when">For browsing and sharing</div>
-          <p>Overview, lineage, search and image pages. Every view is a URL you can bookmark or paste into a ticket. Off localhost it sits behind your auth proxy.</p>
+          <p>Overview, lineage, search, cleanup and image pages. Every view is a URL you can bookmark or paste into a ticket. Off localhost it sits behind your auth proxy.</p>
           <pre><code><span class="p">$</span> strata ui
 <span class="d"># or, for a team:</span>
 <span class="p">$</span> strata serve --addr :8080 \
@@ -129,7 +129,7 @@ localhost:5000/web/docs,1.0.0,stale</span></code></pre>
         <article class="lp-way" style="--accent: var(--info)">
           <div class="lp-icon">{% include ".icons/material/robot-outline.svg" %}</div>
           <h3>MCP</h3><div class="when">For agents</div>
-          <p>Six read-only tools: <code>explain</code>, <code>ancestry</code>, <code>descendants</code>, <code>query</code>, <code>stale</code> and <code>roots</code>. The query tool teaches the filter language, so an agent writes its own filters.</p>
+          <p>Seven read-only tools: <code>explain</code>, <code>ancestry</code>, <code>descendants</code>, <code>query</code>, <code>stale</code>, <code>roots</code> and <code>cleanup</code>. The query tool teaches the filter language, so an agent writes its own filters.</p>
           <pre><code><span class="p">$</span> claude mcp add strata -- strata mcp
 <span class="d">› which payments images are drifting?</span>
 <span class="i">query</span> filter: label.team = "payments"
