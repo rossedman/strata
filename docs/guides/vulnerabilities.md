@@ -4,8 +4,11 @@ When a base image has a CVE, the question is what is built on it, who owns
 that, and what is actually running. strata answers it from the registry's
 own vulnerability scans: it doesn't scan anything itself.
 
-Today that means ECR, which scans images with basic scanning or with Amazon
-Inspector (enhanced scanning).
+That means ECR, which scans images with basic scanning or with Amazon
+Inspector (enhanced scanning), Harbor, with its configured scanner (Trivy by
+default), and Google Artifact Registry, with Artifact Analysis. Azure
+doesn't expose Defender's results through the registry, so ACR images have
+no scans.
 
 ## What is recorded
 
@@ -13,6 +16,9 @@ Inspector (enhanced scanning).
 | --- | --- | --- |
 | Counts by severity, scan time | the `DescribeImages` listing, under enhanced scanning | free: it comes with the listing |
 | Counts and every finding: id, package, version, fixed version | `DescribeImageScanFindings`, with `scan-findings: true` | one call per image whose scan changed |
+| Harbor: counts by severity, scan time | the artifacts listing | free |
+| Harbor: every finding | the artifact's vulnerability report, with `scan-findings` | two calls per image whose scan changed |
+| Artifact Registry: counts and every finding | Artifact Analysis occurrences, with `scan-findings` | one call per image, again weekly |
 
 Basic scanning leaves results out of the listing, so with it, counts and
 findings both need `scan-findings`:
