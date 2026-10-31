@@ -8,7 +8,9 @@
 //
 // When two or more stacks share a prefix that no indexed image ends at,
 // that prefix is a common ancestor that was deleted or never pushed. It is
-// kept as a phantom node keyed by its chain ID, so the tree stays intact.
+// kept as a phantom node keyed by its chain ID, so the tree stays intact,
+// unless only one repo's images share it below another node: that is the
+// repo's build cache, not a base.
 package lineage
 
 import (
@@ -60,9 +62,27 @@ func Recompute(ctx context.Context, db *sql.DB, opts Options) ([]string, error) 
 			JOIN image_prefixes c ON c.digest = p.digest AND c.depth = p.depth + 1
 			GROUP BY p.chain_id
 			HAVING count(DISTINCT c.chain_id) >= 2`,
+		// A branch point inside one repo, below another node, is that
+		// repo's build cache (dependency layers its builds share), not a
+		// base, so it is not kept: the repo's images hang off the node
+		// above. One with nothing above it is kept, so a repo built on a
+		// base the index lacks still groups under it.
+		`CREATE OR REPLACE TEMP TABLE branch_candidates AS
+			SELECT b.chain_id, b.depth, b.stacks, any_value(p.digest) AS rep, count(DISTINCT i.repo) AS repos
+			FROM branches b
+			JOIN image_prefixes p ON p.chain_id = b.chain_id
+			JOIN images i ON i.digest = p.digest
+			WHERE b.chain_id NOT IN (SELECT chain_id FROM stacks)
+			GROUP BY b.chain_id, b.depth, b.stacks`,
+		`CREATE OR REPLACE TEMP TABLE branch_below AS
+			SELECT DISTINCT c.chain_id
+			FROM branch_candidates c
+			JOIN image_prefixes a ON a.digest = c.rep AND a.depth < c.depth
+			WHERE a.chain_id IN (SELECT chain_id FROM stacks) OR a.chain_id IN (SELECT chain_id FROM branches)`,
 		`INSERT INTO new_phantoms
-			SELECT '` + model.PhantomPrefix + `' || b.chain_id, b.chain_id, b.depth, b.stacks
-			FROM branches b WHERE b.chain_id NOT IN (SELECT chain_id FROM stacks)`,
+			SELECT '` + model.PhantomPrefix + `' || c.chain_id, c.chain_id, c.depth, c.stacks
+			FROM branch_candidates c
+			WHERE c.repos >= 2 OR c.chain_id NOT IN (SELECT chain_id FROM branch_below)`,
 		`CREATE OR REPLACE TEMP TABLE nodes AS
 			SELECT chain_id, depth, canonical AS id FROM stacks
 			UNION ALL SELECT chain_id, depth, id FROM new_phantoms`,
