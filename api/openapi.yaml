@@ -459,7 +459,7 @@ paths:
         - name: limit
           in: query
           required: false
-          description: Most candidates to list, largest first; totals count them all. 0 lists all.
+          description: Most candidates and repos to list, largest first; totals count them all. 0 lists all.
           schema:
             type: integer
             minimum: 0
@@ -1249,7 +1249,7 @@ components:
     Cleanup:
       description: "Deletion candidates and what deleting them frees"
       type: object
-      required: [where, scope, candidates, repos, total, images, size, reclaimable_bytes, held]
+      required: [where, scope, candidates, repos, repo_count, total, images, size, reclaimable_bytes, held]
       properties:
         where: { type: string }
         scope: { type: string, enum: [registry, repo] }
@@ -1259,8 +1259,10 @@ components:
             $ref: "#/components/schemas/CleanupCandidate"
         repos:
           type: array
+          description: "Repos with candidates, most reclaimable first, capped by limit"
           items:
             $ref: "#/components/schemas/CleanupRepo"
+        repo_count: { type: integer, description: "Every repo with candidates" }
         total: { type: integer, description: "Candidates: manifests or whole indexes" }
         images: { type: integer, description: "Platform images in the candidates" }
         size: { type: integer, format: int64, description: "Sizes the manifests state, a shared layer counted per image" }
@@ -1371,6 +1373,7 @@ components:
         crawl:
           $ref: "#/components/schemas/CrawlStats"
         error: { type: string, description: "Why the last index failed" }
+        refresh_error: { type: string, description: "Why the last refresh failed; cleared when one succeeds" }
         last_refresh:
           $ref: "#/components/schemas/RefreshStats"
     Change:

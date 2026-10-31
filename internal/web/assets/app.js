@@ -86,6 +86,7 @@
   // happens next, instead of looking broken.
   function notBuilt(st) { return st && !st.refreshed_at; }
   function whyEmpty(st) {
+    if (st.refresh_error && !st.refreshing) { return "The last attempt to compute them failed: <code>" + esc(st.refresh_error) + "</code>. The server log has the details; <code>strata refresh</code> runs it again."; }
     if (st.refreshing) { return "strata is computing lineage and staleness for the first time. On a large index this takes several minutes; <b>Show latest</b> appears at the top when it is done."; }
     if (st.running) {
       var m = Math.round((st.refresh_every_seconds || 0) / 60);
@@ -481,15 +482,16 @@
       '<p class="loading">Working out what can go…</p>';
     $("cform").addEventListener("submit", function (ev) { ev.preventDefault(); var p = {}; if ($("cwhere").value.trim()) { p.where = $("cwhere").value.trim(); } if (scope === "repo") { p.scope = "repo"; } go("cleanup", p); });
     var body = el.querySelector(".loading");
-    Promise.all([api("v1/cleanup", { where: where, scope: scope, limit: 100 }), api("v1/cleanup/lifecycle").catch(function () { return null; })]).then(function (r) {
-      var c = r[0], lcs = r[1] || [], maxR = Math.max.apply(null, c.repos.map(function (x) { return x.reclaimable_bytes; }).concat([1]));
-      var withPolicy = lcs.filter(function (l) { return l.policy; }).length, skipped = lcs.filter(function (l) { return !l.policy; });
+    // The lifecycle report holds a policy per repo, too much to load for a
+    // summary on a large registry, so this view links to the command.
+    api("v1/cleanup", { where: where, scope: scope, limit: 100 }).then(function (c) {
+      var maxR = Math.max.apply(null, c.repos.map(function (x) { return x.reclaimable_bytes; }).concat([1]));
       body.outerHTML =
         (notBuilt(lastStatus) ? pendingHTML(lastStatus) : "") +
         '<div class="kpis">' + [
           ["Reclaimable", bytes(c.reclaimable_bytes), "of " + bytes(c.size) + " the manifests state"],
           ["Candidates", fmt(c.total), fmt(c.images) + " images"],
-          ["Repos", fmt(c.repos.length), "with candidates"],
+          ["Repos", fmt(c.repo_count), "with candidates"],
           ["Held back", fmt(c.held), "kept images are built on them or share their index"],
           ["Export", exportLink("v1/cleanup", { where: where, scope: scope }, "Download CSV"), "every candidate"]
         ].map(function (k) { return '<div class="kpi"><div class="k">' + k[0] + '</div><div class="v num">' + k[1] + '</div><div class="d">' + k[2] + "</div></div>"; }).join("") + "</div>" +
@@ -497,9 +499,8 @@
           c.repos.slice(0, 15).map(function (x) {
             return '<div class="bar" data-search-where="' + esc(x.repo) + '" role="button" tabindex="0"><span class="n"><em>' + esc(nice(x.repo)) + '</em></span><span class="c num">' + bytes(x.reclaimable_bytes) + " · " + fmt(x.candidates) + '</span><div class="mix"><i style="width:' + (100 * x.reclaimable_bytes / maxR).toFixed(1) + '%;background:var(--brand)"></i></div></div>';
           }).join("") + "</div></div></div>" +
-          '<div class="panel"><header><h2>ECR lifecycle policies</h2>' + cmdHTML("strata cleanup lifecycle -o script") + '</header><div class="body"><p class="sub" style="margin:0 0 10px">One rule per repo expiring untagged images past the abandoned window, checked against the index first. ' +
-          fmt(withPolicy) + " of " + fmt(lcs.length) + " repos get a policy.</p>" +
-          (skipped.length ? '<ul class="changes">' + skipped.slice(0, 6).map(function (l) { return '<li><span class="when">skipped</span><span><b>' + esc(nice(l.repo)) + "</b> " + esc(l.skipped) + (l.conflicts.length ? ": " + esc(l.conflicts[0].reason) : "") + "</span></li>"; }).join("") + "</ul>" : "") + "</div></div></div>" +
+          '<div class="panel"><header><h2>ECR lifecycle policies</h2></header><div class="body"><p class="sub" style="margin:0 0 10px">Let ECR do this cleanup: one rule per repo expiring untagged images past the abandoned window, checked against the index first. Repos where a rule would expire an image strata keeps are skipped, with the reason.</p>' +
+          cmdHTML("strata cleanup lifecycle") + '<div style="height:8px"></div>' + cmdHTML("strata cleanup lifecycle -o script > apply-lifecycle.sh") + "</div></div></div>" +
           '<div class="panel"><header><h2>Candidates</h2><span class="pct">' + (c.candidates.length < c.total ? "largest " + fmt(c.candidates.length) + " of " + fmt(c.total) + " · download the CSV for all" : "largest first") + '</span></header><div class="rtable"><table><thead><tr><th>Repo</th><th>Digest</th><th class="r">Images</th><th class="r">Size</th><th class="r">Frees alone</th><th class="r">Pushed</th><th class="r">Last pull</th><th>Why</th></tr></thead><tbody>' +
           c.candidates.map(function (x) {
             return '<tr data-href="#image?d=' + encodeURIComponent(x.digest) + '"><td>' + esc(nice(x.repo)) + '</td><td class="mono">' + esc(x.digest.slice(7, 19)) + '</td><td class="r num">' + fmt(x.images) + '</td><td class="r num">' + bytes(x.size) + '</td><td class="r num">' + bytes(x.exclusive_bytes) + '</td><td class="r num">' + (x.pushed_days == null ? "—" : x.pushed_days + "d ago") + '</td><td class="r num">' + (x.last_pulled_days == null ? "never" : x.last_pulled_days + "d ago") + '</td><td class="trunc pct" title="' + esc(x.reason) + '">' + esc(x.reason || "—") + "</td></tr>";
@@ -544,7 +545,7 @@
       lastStatus = st;
       if (shown === null) { shown = refreshed; }
       var newer = refreshed !== shown;
-      bar.classList.toggle("err", !st.running && !!st.error);
+      bar.classList.toggle("err", !st.running && (!!st.error || (!!st.refresh_error && !st.refreshing)));
       if (st.running) {
         var done = c.repos + c.repos_resumed, pct = c.repos_total ? 100 * done / c.repos_total : 0;
         var secs = st.refresh_every_seconds, every = secs >= 60 ? Math.round(secs / 60) + " min" : secs + " s";
@@ -555,12 +556,14 @@
           (newer ? '<button type="button" id="ilatest">Show latest</button>' : "");
       } else if (st.error) {
         bar.innerHTML = '<span class="err">Indexing ' + esc(nice(st.registry || "")) + " failed: " + esc(st.error) + "</span>" + (newer ? '<button type="button" id="ilatest">Show latest</button>' : "");
+      } else if (st.refresh_error && !st.refreshing) {
+        bar.innerHTML = '<span class="err">Computing lineage and staleness failed: ' + esc(st.refresh_error) + "</span>";
       } else if (st.refreshing) {
         bar.innerHTML = "<span>Computing lineage and staleness" + (refreshed ? "" : " for the first time") + '…</span><span class="when">On a large index this takes several minutes.</span>';
       } else if (newer) {
         bar.innerHTML = (c.repos_total ? "<span>Indexing finished: <b>" + fmt(c.new_images) + "</b> new images</span>" : "<span>Lineage and staleness are up to date.</span>") + '<button type="button" id="ilatest">Show latest</button>';
       }
-      bar.hidden = !st.running && !st.error && !st.refreshing && !newer;
+      bar.hidden = !st.running && !st.error && !st.refresh_error && !st.refreshing && !newer;
       // The first status can arrive after a view has rendered its empty
       // state; render it again with the reason.
       if (!before && notBuilt(st)) { route(); }
