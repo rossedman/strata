@@ -10,8 +10,10 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/rossedman/strata/internal/acr"
 	"github.com/rossedman/strata/internal/crawl"
 	"github.com/rossedman/strata/internal/ecr"
+	"github.com/rossedman/strata/internal/gar"
 	"github.com/rossedman/strata/internal/query"
 	"github.com/rossedman/strata/internal/stale"
 )
@@ -30,9 +32,12 @@ type Registry struct {
 	// Rate is the request limit per second; 0 means unlimited.
 	Rate float64 `mapstructure:"rate"`
 	// Provider picks how the registry is listed: auto (the default) uses
-	// the ECR API for ECR hosts, ecr forces it, and distribution uses the
-	// plain distribution API everywhere.
+	// the ECR, Artifact Registry or ACR API for those hosts; ecr, harbor,
+	// gar and acr force one; distribution uses the plain distribution API.
 	Provider string `mapstructure:"provider"`
+	// Projects are the Google Cloud projects whose Artifact Registry
+	// repositories are listed (gar only).
+	Projects []string `mapstructure:"projects"`
 	// IncludeRepos and ExcludeRepos are repo globs, named without the
 	// host: "*" stays within a path segment and "**" crosses them.
 	IncludeRepos []string `mapstructure:"include-repos"`
@@ -52,20 +57,38 @@ type Registry struct {
 const (
 	ProviderAuto         = "auto"
 	ProviderECR          = "ecr"
+	ProviderHarbor       = "harbor"
+	ProviderGAR          = "gar"
+	ProviderACR          = "acr"
 	ProviderDistribution = "distribution"
 )
 
-// UsesECR reports whether the registry is listed through the ECR API.
-func (r Registry) UsesECR() bool {
+// Kind returns the provider the registry is listed with, resolving auto
+// from the host: ECR, Artifact Registry and ACR hosts are recognized;
+// Harbor has to be named.
+func (r Registry) Kind() string {
 	switch r.Provider {
-	case ProviderECR:
-		return true
-	case ProviderDistribution:
-		return false
+	case "", ProviderAuto:
+	default:
+		return r.Provider
 	}
-	_, _, ok := ecr.ParseHost(r.Host)
-	return ok
+	if _, _, ok := ecr.ParseHost(r.Host); ok {
+		return ProviderECR
+	}
+	if _, ok := gar.ParseHost(r.Host); ok {
+		return ProviderGAR
+	}
+	if acr.IsHost(r.Host) {
+		return ProviderACR
+	}
+	return ProviderDistribution
 }
+
+// UsesECR reports whether the registry is listed through the ECR API.
+func (r Registry) UsesECR() bool { return r.Kind() == ProviderECR }
+
+// ReportsPushes reports whether the registry's API reports push times.
+func (r Registry) ReportsPushes() bool { return r.Kind() != ProviderDistribution }
 
 // Check reports settings that would fail the crawl.
 func (r Registry) Check() error {
@@ -76,20 +99,28 @@ func (r Registry) Check() error {
 		return fmt.Errorf("workers and rate must not be negative")
 	}
 	switch r.Provider {
-	case "", ProviderAuto, ProviderECR, ProviderDistribution:
+	case "", ProviderAuto, ProviderECR, ProviderHarbor, ProviderGAR, ProviderACR, ProviderDistribution:
 	default:
-		return fmt.Errorf("provider %q: use auto, ecr or distribution", r.Provider)
+		return fmt.Errorf("provider %q: use auto, ecr, harbor, gar, acr or distribution", r.Provider)
 	}
 	if r.Provider == ProviderECR {
 		if _, _, ok := ecr.ParseHost(r.Host); !ok {
 			return fmt.Errorf("provider ecr needs an ECR host, such as 123456789012.dkr.ecr.us-east-1.amazonaws.com")
 		}
 	}
+	if r.Kind() == ProviderGAR {
+		if _, ok := gar.ParseHost(r.Host); !ok {
+			return fmt.Errorf("provider gar needs an Artifact Registry host, such as us-docker.pkg.dev")
+		}
+		if len(r.Projects) == 0 && len(r.Repos) == 0 {
+			return fmt.Errorf("artifact registry needs projects, or repos as project/repository/image")
+		}
+	}
 	if _, err := r.Filter(); err != nil {
 		return err
 	}
-	if r.PushedSince != "" && !r.UsesECR() {
-		return fmt.Errorf("pushed-since needs a registry that reports push times, such as ECR")
+	if r.PushedSince != "" && !r.ReportsPushes() {
+		return fmt.Errorf("pushed-since needs a registry API that reports push times: ECR, Harbor, Artifact Registry or ACR")
 	}
 	return nil
 }
