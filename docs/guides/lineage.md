@@ -53,6 +53,7 @@ The grouped form answers "how many images are still on each old version of this 
 | Several images share one top chain ID (rebuilt or retagged) | The parent is ambiguous | They are one layer stack; the earliest-created digest is the canonical parent |
 | Multi-platform index | Each platform has its own stack | Lineage is computed per platform manifest; refs to the index resolve to `--platform`, default `linux/amd64` |
 | Parent deleted from the registry, or never pushed | Several images share a prefix no indexed image ends at | strata records a phantom ancestor keyed by chain ID, shown as "not in registry", so the tree stays intact |
+| Builds of one repo share dependency layers (`npm ci`, `pip install`) | A prefix no image ends at, shared by one repo's builds, below a real base | Build cache, not a base: no phantom is recorded and the builds hang off the base above. A repo whose only base is not indexed still groups under a phantom |
 | Labels disagree with layers | Declared parent differs from the inferred one | Both edges are kept with their source; `explain` and graphs flag the conflict |
 
 Phantom ancestors most often stand for an upstream base you have not mirrored, such as `debian:bookworm-slim`. Add it to `external` in the [config](../configuration.md) and the next crawl names it.

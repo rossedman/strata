@@ -149,3 +149,50 @@ func TestRecomputeCanceled(t *testing.T) {
 		t.Fatal("Recompute ran on a canceled context")
 	}
 }
+
+// TestBuildCacheIsNotABase covers phantoms, layers several stacks share
+// that no indexed image ends at. Builds of one repo share their
+// dependency layers; that is build cache, not a base, so those builds hang
+// off the base above. A repo's only unindexed base, with nothing above
+// it, still groups its builds, and layers two repos share stay a node.
+func TestBuildCacheIsNotABase(t *testing.T) {
+	t.Parallel()
+	node := fixture.Image("node", "reg.io/base/node", "n1")
+	imgs := []*model.Image{
+		node,
+		// Two builds of web on node, sharing an npm install layer.
+		fixture.Image("web-1", "reg.io/web", "n1", "npm", "code-1"),
+		fixture.Image("web-2", "reg.io/web", "n1", "npm", "code-2"),
+		// Two builds of tool on a base the index lacks.
+		fixture.Image("tool-1", "reg.io/tool", "x1", "x2", "t1"),
+		fixture.Image("tool-2", "reg.io/tool", "x1", "x2", "t2"),
+		// Two repos on a shared base the index lacks.
+		fixture.Image("a", "reg.io/a", "s1", "s2", "a"),
+		fixture.Image("b", "reg.io/b", "s1", "s2", "b"),
+	}
+	s := fixture.Open(t, &store.Batch{Images: imgs})
+	ctx := context.Background()
+	if _, err := Recompute(ctx, s.DB(), Options{}); err != nil {
+		t.Fatal(err)
+	}
+	parent := func(name string) string {
+		var p sql.NullString
+		if err := s.DB().QueryRow(`SELECT parent FROM lineage WHERE digest = ?`, fixture.Digest("manifest:"+name)).Scan(&p); err != nil {
+			t.Fatal(err)
+		}
+		return p.String
+	}
+	if got := parent("web-1"); got != node.Digest {
+		t.Errorf("web-1's parent = %s, want node: the npm layer is web's build cache", got)
+	}
+	if got := parent("tool-1"); !model.IsPhantom(got) || got != parent("tool-2") {
+		t.Errorf("tool builds = %s and %s, want one phantom base", got, parent("tool-2"))
+	}
+	if got := parent("a"); !model.IsPhantom(got) || got != parent("b") {
+		t.Errorf("a and b = %s and %s, want one shared phantom", got, parent("b"))
+	}
+	var n int
+	if err := s.DB().QueryRow(`SELECT count(*) FROM phantoms`).Scan(&n); err != nil || n != 2 {
+		t.Fatalf("phantoms = %d, %v", n, err)
+	}
+}
