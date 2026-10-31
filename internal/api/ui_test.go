@@ -45,3 +45,34 @@ func TestUIEndpoints(t *testing.T) {
 		t.Fatalf("map = %d %s", m.StatusCode(), m.Body)
 	}
 }
+
+func TestChartEndpoints(t *testing.T) {
+	t.Parallel()
+	c, _ := serve(t, Options{})
+	if k, err := c.GetKPIHistoryWithResponse(ctx, nil); err != nil || k.JSON200 == nil || len(*k.JSON200) != 1 {
+		t.Fatalf("kpis = %d %s", k.StatusCode(), k.Body)
+	}
+	repo := client.GetStorageHistoryParamsGroupBy("repo")
+	if s, err := c.GetStorageHistoryWithResponse(ctx, &client.GetStorageHistoryParams{GroupBy: &repo}); err != nil || s.JSON200 == nil || len(s.JSON200.Series) == 0 {
+		t.Fatalf("storage = %d %s", s.StatusCode(), s.Body)
+	}
+	if a, err := c.GetActivityWithResponse(ctx, nil); err != nil || a.JSON200 == nil || a.JSON200.Source != "created" {
+		t.Fatalf("activity = %d %s", a.StatusCode(), a.Body)
+	}
+	if a, err := c.GetAgesWithResponse(ctx); err != nil || a.JSON200 == nil || len(a.JSON200.Bins) == 0 {
+		t.Fatalf("ages = %d %s", a.StatusCode(), a.Body)
+	}
+	if cv, err := c.GetBaseCoverageWithResponse(ctx); err != nil || cv.JSON200 == nil || len(*cv.JSON200) != 1 {
+		t.Fatalf("coverage = %d %s", cv.StatusCode(), cv.Body)
+	}
+	ad, err := c.GetAdoptionWithResponse(ctx, nil)
+	if err != nil || ad.JSON200 == nil || ad.JSON200.Base == "" {
+		t.Fatalf("adoption = %d %s", ad.StatusCode(), ad.Body)
+	}
+	if r, err := c.GetRolloutWithResponse(ctx, &client.GetRolloutParams{Base: ad.JSON200.Base}); err != nil || r.JSON200 == nil || len(r.JSON200.Days) != 1 {
+		t.Fatalf("rollout = %d %s", r.StatusCode(), r.Body)
+	}
+	if r, _ := c.GetRolloutWithResponse(ctx, &client.GetRolloutParams{Base: ""}); r.JSON400 == nil {
+		t.Fatalf("rollout without a base = %d", r.StatusCode())
+	}
+}

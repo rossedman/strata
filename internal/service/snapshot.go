@@ -72,6 +72,11 @@ func (s *Service) snapshot(ctx context.Context) (int, error) {
 	for _, k := range keys {
 		rows = append(rows, []any{date, "label_coverage", k.Key, "coverage_pct", k.CoveragePct})
 	}
+	parents, err := s.parentCounts(ctx, date)
+	if err != nil {
+		return 0, err
+	}
+	rows = append(rows, parents...)
 	n, err := s.Store.MergeRows(ctx, "snapshots", "day = ?", []any{day}, []string{"day", "group_by", "group_value", "metric"}, rows)
 	if err != nil {
 		return 0, fmt.Errorf("write snapshot: %w", err)

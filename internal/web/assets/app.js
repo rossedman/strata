@@ -4,13 +4,15 @@
 //   #lineage            #lineage?focus=<row id>&stale=1
 //   #search?q=<filter>&team=a&verdict=stale&page=2
 //   #image?d=<digest>
+//   #bases?base=<repo>
+//   #insights?storage=repo&repo=<repo>
 //   #cleanup            #cleanup?scope=repo&where=<filter>
 (function () {
   "use strict";
 
   var COL = { fresh: "#5fd39a", drifting: "#e8c84a", stale: "#f08a5d", abandoned: "#a3a3ad" };
   var V = ["fresh", "drifting", "stale", "abandoned"];
-  var VIEWS = ["overview", "lineage", "search", "cleanup", "image"];
+  var VIEWS = ["overview", "lineage", "bases", "search", "insights", "cleanup", "image"];
   var host = "";
 
   // ---------- helpers ----------
@@ -122,6 +124,7 @@
         }).join("") : '<p class="empty-state">' + (pending ? "Root bases appear once lineage is computed." : "No root bases yet. Run strata index.") + "</p>") + "</div></div></div>" +
         '<div class="panel"><header><h2>This week</h2>' + cmdHTML("strata diff --since 7d") + '</header><div class="body"><ul class="changes">' + changesHTML(o.changes) + "</ul></div></div></div>" +
         '<div class="panel"><header><h2>Registry map</h2><span class="pct">root bases left, descendants right · sized by images · colored by stale share · click to open in Lineage</span></header><div class="body ice"><div class="cols" id="icecols"></div><canvas id="ice" height="420" aria-label="Icicle chart of root bases and their descendants"></canvas></div></div>';
+      kpiTrends(el);
       if (!map.length) {
         $("icecols").innerHTML = "";
         $("ice").outerHTML = '<p class="empty-state">' + (pending ? "The registry map appears once lineage is computed." : "Nothing indexed yet. Run strata index.") + "</p>";
@@ -455,6 +458,7 @@
       '<div class="panel"><header><h2>Ancestry</h2>' + (li.parent ? '<button type="button" class="chip" data-focus="' + esc(li.parent) + '">Open parent in Lineage</button>' : "") + '</header><div class="body chain">' + (chain.length > 1 ? svg : '<p class="sub">' + (li.status === "unknown" ? "Lineage unknown: one layer and no declared base, as with squashed or FROM scratch images." : "This image is a root: no indexed image is a prefix of its layers.") + "</p>") +
       (sources.length || li.descendants ? '<p class="sub" style="margin-top:10px">' + [sources.length ? "Parent evidence: " + esc(sources.join(", ")) : "", li.descendants ? fmt(li.descendants) + " image" + (li.descendants === 1 ? " is" : "s are") + " built on this one" : ""].filter(Boolean).join(" · ") + "</p>" : "") +
       (built ? '<p class="sub" style="margin-top:10px">Built from, by its build provenance:</p><ul class="reasons" style="margin-top:6px">' + built + "</ul>" : "") + "</div></div>" +
+      layerMap(ex, chain) +
       '<div class="grid2"><div class="panel"><header><h2>Layers</h2><span class="pct">' + im.layer_count + " layers · " + bytes(im.size) + '</span></header><div class="rtable"><table class="layers"><thead><tr><th class="r">#</th><th class="r">Size</th><th>Built by</th><th class="r">Shared by</th></tr></thead><tbody>' +
       ex.layers.map(function (l) { return '<tr><td class="r num">' + l.position + '</td><td class="r num">' + bytes(l.size) + "</td><td>" + esc(l.created_by || "—") + '</td><td class="r num">' + short(l.shared_by) + "</td></tr>"; }).join("") + "</tbody></table></div></div>" +
       '<div class="panel"><header><h2>Image</h2></header><div class="body"><dl class="kv">' +
@@ -525,6 +529,315 @@
   });
 
   // ---------- routing ----------
+  // ---------- charts ----------
+  // Charts are SVG strings built from the chart endpoints, which aggregate
+  // in SQL, so no chart draws more than a few hundred marks. Marks carry
+  // their tooltip in data-tip; one listener shows it.
+  var SERIES = ["#a99bff", "#4fc3d9", "#e8a24a", "#e87ba4", "#7aa2ff", "#5fd39a"], OTHER = "#5a5672";
+  function svgOpen(w, h, label, cls) { return '<svg class="chart' + (cls ? " " + cls : "") + '" viewBox="0 0 ' + w + " " + h + '" role="img" aria-label="' + esc(label) + '">'; }
+  function tipAttr(html) { return ' data-tip="' + esc(html) + '"'; }
+  function niceMax(max, n) {
+    max = Math.max(max, 1); n = n || 4;
+    var s = Math.pow(10, Math.floor(Math.log10(max / n))), step = [1, 2, 2.5, 5, 10].map(function (m) { return m * s; }).filter(function (x) { return max / x <= n; })[0];
+    return { step: step, top: Math.ceil(max / step) * step };
+  }
+  function shortDay(d) { var t = new Date(d + "T00:00:00Z"); return t.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" }); }
+  function legendHTML(items) { return '<div class="legend">' + items.map(function (x) { return '<span><i class="dot sq" style="background:' + x[0] + '"></i>' + esc(x[1]) + "</span>"; }).join("") + "</div>"; }
+  function chartEmpty(msg) { return '<p class="empty-state">' + msg + "</p>"; }
+  document.addEventListener("mouseover", function (e) { var t = e.target.closest && e.target.closest("[data-tip]"); if (t) { showTip(e.clientX, e.clientY, t.getAttribute("data-tip")); } });
+  document.addEventListener("mousemove", function (e) { var t = e.target.closest && e.target.closest("[data-tip]"); if (t && !tip.hidden) { showTip(e.clientX, e.clientY, t.getAttribute("data-tip")); } });
+  document.addEventListener("mouseout", function (e) { if (e.target.closest && e.target.closest("[data-tip]")) { tip.hidden = true; } });
+  document.addEventListener("focusin", function (e) { var t = e.target.closest && e.target.closest("[data-tip]"); if (t) { var r = t.getBoundingClientRect(); showTip(r.right, r.top, t.getAttribute("data-tip")); } });
+  document.addEventListener("focusout", function () { tip.hidden = true; });
+
+  // sparkline draws a small trend line with its last point marked.
+  function sparkline(vals, label) {
+    var W = 92, H = 30, lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
+    var x = function (i) { return 2 + i * (W - 6) / (vals.length - 1); }, y = function (v) { return 4 + (H - 8) * (1 - (v - lo) / (hi - lo || 1)); };
+    var d = vals.map(function (v, i) { return (i ? "L" : "M") + x(i).toFixed(1) + "," + y(v).toFixed(1); }).join("");
+    return svgOpen(W, H, label, "spark") + '<path d="' + d + "L" + x(vals.length - 1).toFixed(1) + "," + H + "L2," + H + 'Z" fill="#a99bff" fill-opacity=".12"/>' +
+      '<path d="' + d + '" fill="none" stroke="#a99bff" stroke-width="1.75" stroke-linejoin="round" stroke-linecap="round"/>' +
+      '<circle cx="' + x(vals.length - 1).toFixed(1) + '" cy="' + y(vals[vals.length - 1]).toFixed(1) + '" r="2.5" fill="#a99bff"/></svg>';
+  }
+  // kpiTrends adds 30-day trend lines under the Overview's numbers once
+  // there are two snapshot days to draw.
+  function kpiTrends(el) {
+    api("v1/charts/kpis", { days: 30 }).then(function (days) {
+      if (!days || days.length < 2) { return; }
+      var tiles = el.querySelectorAll(".kpis .kpi"), first = days[0], last = days[days.length - 1];
+      var picks = [
+        [function (d) { return d.images; }, fmt],
+        [function (d) { return d.repos; }, fmt],
+        [function (d) { return d.unique_stacks; }, fmt],
+        [function (d) { return d.dedup_bytes; }, bytes],
+        [function (d) { return d.images ? 100 * (d.stale + d.abandoned) / d.images : 0; }, function (v) { return v.toFixed(1) + "%"; }]
+      ];
+      picks.forEach(function (p, i) {
+        var t = tiles[i];
+        if (!t) { return; }
+        var vals = days.map(p[0]), label = tiles[i].querySelector(".k").textContent;
+        var s = document.createElement("div");
+        s.className = "trend";
+        s.setAttribute("data-tip", "<b>" + esc(label) + "</b>" + esc(shortDay(first.day)) + ": " + esc(p[1](p[0](first))) + "<br>" + esc(shortDay(last.day)) + ": " + esc(p[1](p[0](last))));
+        s.innerHTML = sparkline(vals, label + " over the last " + days.length + " snapshot days");
+        t.appendChild(s);
+      });
+    }).catch(function () {});
+  }
+
+  // ---------- bases ----------
+  function behindColor(n) { return n === 0 ? COL.fresh : n <= 2 ? COL.drifting : COL.stale; }
+  function releaseName(r, base) {
+    var tag = (r.tags || []).map(function (t) { return t.slice(t.lastIndexOf(":") + 1); })[0];
+    return tag ? tag : (r.digest || "").replace(/^sha256:/, "").slice(0, 12);
+  }
+  function releaseRef(r, base) { return (r.tags && r.tags.length) ? r.tags[0] : base + "@" + r.digest; }
+  function basesView(el, params) {
+    el.innerHTML = '<p class="loading">Loading bases…</p>';
+    api("v1/charts/adoption", { base: params.get("base") || "" }).then(function (ad) {
+      if (!ad.base) {
+        el.innerHTML = '<div class="head"><div><h1>Bases</h1></div></div>' + chartEmpty("No repo has images in other repos built on it yet. Bases appear here once lineage is computed and images are linked to them.");
+        return;
+      }
+      var max = Math.max.apply(null, ad.releases.map(function (r) { return r.images; }).concat([1]));
+      el.innerHTML =
+        '<div class="head"><div><h1>Bases</h1><p class="sub">Which releases of a base the images built on it use, and how that is changing. Counts are images in other repos built directly on each release.</p></div></div>' +
+        '<div class="chips" role="group" aria-label="Base">' + ad.bases.map(function (b) { return '<button type="button" class="chip" data-base="' + esc(b.repo) + '" aria-pressed="' + (b.repo === ad.base) + '">' + esc(nice(b.repo)) + ' <span class="pct">' + short(b.images) + "</span></button>"; }).join("") + "</div>" +
+        '<div class="panel"><header><h2>Releases of ' + esc(nice(ad.base)) + '</h2><span class="pct">newest first · click a release to search the images on it</span></header><div class="body">' +
+        legendHTML([[COL.fresh, "newest release"], [COL.drifting, "1–2 releases behind"], [COL.stale, "3 or more behind"]]) +
+        '<div class="rels">' + (ad.releases.length ? ad.releases.map(function (r) {
+          var w = r.images ? Math.max(0.6, 100 * r.images / max) : 0;
+          var q = "parent = " + JSON.stringify(releaseRef(r, ad.base)) + " and repo != " + JSON.stringify(ad.base);
+          return '<button type="button" class="rel" data-q="' + esc(q) + '"' + tipAttr("<b>" + esc(nice(releaseRef(r, ad.base))) + "</b>" + fmt(r.images) + " images in " + fmt(r.repos) + " repos" + (r.behind ? " · " + r.behind + " newer release" + (r.behind > 1 ? "s" : "") : " · newest release") + (r.built ? " · built " + esc(r.built) : "") + '<div class="mix">' + mixHTML(r.verdicts) + "</div>") + ">" +
+            '<span class="rn"><b class="mono">' + esc(releaseName(r, ad.base)) + '</b><span class="mono">' + esc((r.digest || "").replace(/^sha256:/, "").slice(0, 12)) + (r.built ? " · " + esc(r.built) : "") + "</span></span>" +
+            '<span class="track"><i style="width:' + w.toFixed(2) + "%;background:" + behindColor(r.behind) + '"></i></span>' +
+            '<span class="c num">' + (r.images ? fmt(r.images) + " · " + fmt(r.repos) + " repo" + (r.repos === 1 ? "" : "s") : "nothing yet") + "</span></button>";
+        }).join("") : chartEmpty("Nothing is built on this repo's releases.")) + "</div></div></div>" +
+        '<div class="panel"><header><h2>Rollout</h2><span class="pct">share of the images built on ' + esc(nice(ad.base)) + ' that use each release, per day</span></header><div class="body" id="rollout"><p class="loading">Loading…</p></div></div>';
+      rollout(ad.base);
+    }).catch(function (e) { el.innerHTML = '<p class="loading err">Could not load bases: ' + esc(e.message) + "</p>"; });
+  }
+  document.addEventListener("click", function (e) {
+    var b = e.target.closest("[data-base]"); if (b) { go("bases", { base: b.getAttribute("data-base") }); return; }
+    var r = e.target.closest("[data-q]"); if (r) { var p = { q: r.getAttribute("data-q") }; if (r.getAttribute("data-verdict")) { p.verdict = r.getAttribute("data-verdict"); } go("search", p); }
+  });
+  function rollout(base) {
+    api("v1/charts/rollout", { base: base, days: 90 }).then(function (ro) {
+      var box = $("rollout");
+      if (!box) { return; }
+      if (ro.days.length < 2) {
+        box.innerHTML = chartEmpty("Rollout history builds up from the daily snapshots strata takes at each refresh. Come back after a few days of refreshes to see images move between releases.");
+        return;
+      }
+      var W = 1000, H = 260, L = 44, R = 150, T = 12, B = 26, n = ro.days.length;
+      var totals = ro.days.map(function (_, i) { return ro.series.reduce(function (a, s) { return a + s.counts[i]; }, 0) || 1; });
+      var color = function (s, i) { return s.older ? OTHER : SERIES[i % SERIES.length]; };
+      var name = function (s) { return s.older ? "older releases" : releaseName({ tags: s.tags, digest: s.release }); };
+      var x = function (i) { return L + (W - L - R) * i / (n - 1); }, y = function (v) { return T + (H - T - B) * (1 - v / 100); };
+      var svg = svgOpen(W, H, "Share of images on each release of " + base + " per day");
+      [0, 25, 50, 75, 100].forEach(function (t) { svg += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + y(t) + '" y2="' + y(t) + '" class="' + (t ? "gl" : "bl") + '"/><text x="' + (L - 8) + '" y="' + (y(t) + 4) + '" class="ax" text-anchor="end">' + t + "%</text>"; });
+      [0, Math.floor((n - 1) / 2), n - 1].forEach(function (i, k) { svg += '<text x="' + x(i) + '" y="' + (H - 6) + '" class="ax" text-anchor="' + ["start", "middle", "end"][k] + '">' + esc(shortDay(ro.days[i])) + "</text>"; });
+      var ends = [];
+      ro.series.forEach(function (s, k) {
+        var pts = s.counts.map(function (c, i) { return 100 * c / totals[i]; });
+        svg += '<path d="' + pts.map(function (v, i) { return (i ? "L" : "M") + x(i).toFixed(1) + "," + y(v).toFixed(1); }).join("") + '" fill="none" stroke="' + color(s, k) + '" stroke-width="2" stroke-linejoin="round"/>';
+        svg += '<circle cx="' + x(n - 1) + '" cy="' + y(pts[n - 1]) + '" r="4" fill="' + color(s, k) + '" stroke="#17152a" stroke-width="2"/>';
+        ends.push({ y: y(pts[n - 1]), text: Math.round(pts[n - 1]) + "% " + name(s) });
+      });
+      ends.sort(function (a, b) { return a.y - b.y; });
+      ends.forEach(function (e, i) { if (i && e.y - ends[i - 1].y < 14) { e.y = ends[i - 1].y + 14; } svg += '<text x="' + (W - R + 10) + '" y="' + (e.y + 4) + '" class="lb">' + esc(e.text) + "</text>"; });
+      var cw = (W - L - R) / (n - 1);
+      ro.days.forEach(function (d, i) {
+        svg += '<g class="col"' + tipAttr("<b>" + esc(shortDay(d)) + "</b>" + ro.series.map(function (s, k) { return '<span style="color:' + color(s, k) + '">●</span> ' + esc(name(s)) + ": " + fmt(s.counts[i]) + " (" + Math.round(100 * s.counts[i] / totals[i]) + "%)"; }).join("<br>")) + '><rect x="' + (x(i) - cw / 2) + '" y="' + T + '" width="' + cw + '" height="' + (H - T - B) + '" fill="transparent"/><line x1="' + x(i) + '" x2="' + x(i) + '" y1="' + T + '" y2="' + (H - B) + '"/></g>';
+      });
+      box.innerHTML = legendHTML(ro.series.map(function (s, k) { return [color(s, k), name(s)]; })) + '<div class="chartbox">' + svg + "</svg></div>";
+    }).catch(function (e) { var box = $("rollout"); if (box) { box.innerHTML = '<p class="loading err">' + esc(e.message) + "</p>"; } });
+  }
+
+  // ---------- insights ----------
+  function insightsView(el, params) {
+    var by = params.get("storage") === "repo" ? "repo" : "root", repo = params.get("repo") || "";
+    el.innerHTML =
+      '<div class="head"><div><h1>Insights</h1><p class="sub">How the registry grows, when teams push, how old the images are, and how well strata linked them to their bases.</p></div></div>' +
+      '<div class="panel"><header><h2>Storage over time</h2><div class="seg" role="group" aria-label="Split storage by"><button type="button" data-storage="root" aria-pressed="' + (by === "root") + '">By root base</button><button type="button" data-storage="repo" aria-pressed="' + (by === "repo") + '">By repo</button></div></header><div class="body" id="storage"><p class="loading">Loading…</p></div></div>' +
+      '<div class="grid2"><div class="panel"><header><h2 id="acttitle">Pushes per day</h2><span class="pct" id="actnote"></span></header><div class="body" id="activity"><p class="loading">Loading…</p></div></div>' +
+      '<div class="panel"><header><h2>Image age</h2><span class="pct" id="agenote">click a bar to search it</span></header><div class="body" id="ages"><p class="loading">Loading…</p></div></div></div>' +
+      '<div class="panel"><header><h2>How bases were found</h2><span class="pct">per registry · how each image was linked to its parent</span></header><div class="body" id="coverage"><p class="loading">Loading…</p></div></div>';
+    storageChart(by); activityChart(repo); agesChart(); coverageChart();
+  }
+  function insightsParams(change) {
+    var p = parseHash().params, out = {};
+    if (p.get("storage")) { out.storage = p.get("storage"); }
+    if (p.get("repo")) { out.repo = p.get("repo"); }
+    Object.keys(change).forEach(function (k) { if (change[k]) { out[k] = change[k]; } else { delete out[k]; } });
+    go("insights", out);
+  }
+  document.addEventListener("click", function (e) {
+    var s = e.target.closest("[data-storage]"); if (s) { insightsParams({ storage: s.getAttribute("data-storage") === "repo" ? "repo" : "" }); return; }
+    var r = e.target.closest("[data-actrepo]"); if (r) { insightsParams({ repo: r.getAttribute("data-actrepo") }); }
+  });
+  function fail(id) { return function (e) { var b = $(id); if (b) { b.innerHTML = '<p class="loading err">' + esc(e.message) + "</p>"; } }; }
+
+  function storageChart(by) {
+    api("v1/charts/storage", { group_by: by, top: 6, days: 365 }).then(function (st) {
+      var box = $("storage");
+      if (!box) { return; }
+      var n = st.days.length;
+      if (n < 2) {
+        box.innerHTML = chartEmpty("Storage history builds up from the daily snapshots strata takes at each refresh. " + (n ? "Today's is recorded; the chart appears after the next day's." : "None is recorded yet."));
+        return;
+      }
+      var W = 1000, H = 280, L = 64, R = 190, T = 12, B = 26;
+      var color = function (s, i) { return s.other ? OTHER : SERIES[i % SERIES.length]; };
+      var label = function (s) { return s.other ? "everything else" : s.label || nice(s.group); };
+      var stack = st.days.map(function (_, i) { var acc = 0; return st.series.map(function (s) { var a = acc; acc += s.values[i]; return [a, acc]; }); });
+      var max = Math.max.apply(null, stack.map(function (c) { return c.length ? c[c.length - 1][1] : 0; }));
+      var unit = Math.pow(1024, Math.max(0, Math.floor(Math.log(Math.max(max, 1)) / Math.log(1024)))), sc = niceMax(max / unit);
+      sc = { step: sc.step * unit, top: sc.top * unit };
+      var x = function (i) { return L + (W - L - R) * i / (n - 1); }, y = function (v) { return T + (H - T - B) * (1 - v / sc.top); };
+      var svg = svgOpen(W, H, "Deduplicated storage per " + (by === "repo" ? "repo" : "root base") + " per day");
+      for (var t = 0; t <= sc.top + 1e-9; t += sc.step) { svg += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + y(t) + '" y2="' + y(t) + '" class="' + (t ? "gl" : "bl") + '"/><text x="' + (L - 8) + '" y="' + (y(t) + 4) + '" class="ax" text-anchor="end">' + bytes(t) + "</text>"; }
+      [0, Math.floor((n - 1) / 2), n - 1].forEach(function (i, k) { svg += '<text x="' + x(i) + '" y="' + (H - 6) + '" class="ax" text-anchor="' + ["start", "middle", "end"][k] + '">' + esc(shortDay(st.days[i])) + "</text>"; });
+      var ends = [];
+      st.series.forEach(function (s, k) {
+        var top = stack.map(function (c, i) { return (i ? "L" : "M") + x(i).toFixed(1) + "," + y(c[k][1]).toFixed(1); }).join("");
+        var bot = stack.map(function (c, i) { return "L" + x(i).toFixed(1) + "," + y(c[k][0]).toFixed(1); }).reverse().join("");
+        svg += '<path d="' + top + bot + 'Z" fill="' + color(s, k) + '" fill-opacity=".8" stroke="#17152a" stroke-width="1.5"/>';
+        var c = stack[n - 1][k];
+        ends.push({ y: y((c[0] + c[1]) / 2), text: label(s) + " · " + bytes(s.values[n - 1]) });
+      });
+      ends.sort(function (a, b) { return b.y - a.y; });
+      ends.forEach(function (e, i) { if (i && ends[i - 1].y - e.y < 14) { e.y = ends[i - 1].y - 14; } var t = e.text.length > 30 ? e.text.slice(0, 29) + "…" : e.text; svg += '<text x="' + (W - R + 10) + '" y="' + (e.y + 4) + '" class="lb">' + esc(t) + "</text>"; });
+      var cw = (W - L - R) / (n - 1);
+      st.days.forEach(function (d, i) {
+        var total = stack[i].length ? stack[i][stack[i].length - 1][1] : 0;
+        svg += '<g class="col"' + tipAttr("<b>" + esc(shortDay(d)) + " · " + bytes(total) + "</b>" + st.series.map(function (s, k) { return '<span style="color:' + color(s, k) + '">■</span> ' + esc(label(s)) + ": " + bytes(s.values[i]); }).join("<br>")) + '><rect x="' + (x(i) - cw / 2) + '" y="' + T + '" width="' + cw + '" height="' + (H - T - B) + '" fill="transparent"/><line x1="' + x(i) + '" x2="' + x(i) + '" y1="' + T + '" y2="' + (H - B) + '"/></g>';
+      });
+      box.innerHTML = legendHTML(st.series.map(function (s, k) { return [color(s, k), label(s)]; })) + '<div class="chartbox">' + svg + "</svg></div>" +
+        '<p class="sub">A layer that several ' + (by === "repo" ? "repos" : "bases") + " use is split between them, so the bands add up to the registry's deduplicated size.</p>";
+    }).catch(fail("storage"));
+  }
+
+  function activityChart(repo) {
+    api("v1/charts/activity", { repo: repo, days: 182 }).then(function (a) {
+      var box = $("activity");
+      if (!box) { return; }
+      var counts = {}, max = 0, total = 0;
+      a.days.forEach(function (d) { counts[d.day] = d.count; max = Math.max(max, d.count); total += d.count; });
+      $("acttitle").textContent = a.source === "pushed" ? "Pushes per day" : "Builds per day";
+      $("actnote").textContent = (repo ? nice(repo) + " · " : "") + fmt(total) + " images in 26 weeks" + (a.source === "created" ? " · dated by build time; this registry reports no push times" : "");
+      var end = new Date(a.to + "T00:00:00Z"), start = new Date(end.getTime() - 181 * 864e5);
+      start = new Date(start.getTime() - ((start.getUTCDay() + 6) % 7) * 864e5); // back to Monday
+      var weeks = Math.ceil(((end - start) / 864e5 + 1) / 7), c = 16, L = 30, T = 18, W = L + weeks * c, H = T + 7 * c;
+      var svg = svgOpen(W, H, "Images per day over 26 weeks", "cal").replace("<svg ", '<svg style="width:' + W + 'px" ');
+      ["Mon", "Wed", "Fri"].forEach(function (d, i) { svg += '<text x="0" y="' + (T + i * 2 * c + 10) + '" class="ax">' + d + "</text>"; });
+      var lastMonth = -1, lastLabel = -9;
+      for (var w = 0; w < weeks; w++) {
+        for (var d = 0; d < 7; d++) {
+          var day = new Date(start.getTime() + (w * 7 + d) * 864e5);
+          if (day > end) { continue; }
+          var key = day.toISOString().slice(0, 10), n = counts[key] || 0;
+          if (d === 0 && day.getUTCMonth() !== lastMonth && w < weeks - 1 && w - lastLabel >= 3) { lastMonth = day.getUTCMonth(); lastLabel = w; svg += '<text x="' + (L + w * c) + '" y="10" class="ax">' + day.toLocaleDateString("en-US", { month: "short", timeZone: "UTC" }) + "</text>"; }
+          var op = n ? Math.min(1, 0.22 + 0.78 * Math.sqrt(n / max)) : 1;
+          svg += '<rect x="' + (L + w * c) + '" y="' + (T + d * c) + '" width="' + (c - 3) + '" height="' + (c - 3) + '" rx="2.5" fill="' + (n ? "#a99bff" : "#0a0912") + '" fill-opacity="' + op.toFixed(2) + '"' + tipAttr("<b>" + fmt(n) + " image" + (n === 1 ? "" : "s") + "</b>" + esc(day.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }))) + "/>";
+        }
+      }
+      var picks = '<div class="chips" role="group" aria-label="Repo"><button type="button" class="chip" data-actrepo="" aria-pressed="' + !repo + '">All repos</button>' +
+        a.repos.map(function (r) { return '<button type="button" class="chip" data-actrepo="' + esc(r.repo) + '" aria-pressed="' + (r.repo === repo) + '">' + esc(nice(r.repo)) + "</button>"; }).join("") +
+        (repo && !a.repos.some(function (r) { return r.repo === repo; }) ? '<button type="button" class="chip" aria-pressed="true">' + esc(nice(repo)) + "</button>" : "") + "</div>";
+      box.innerHTML = picks + '<div class="chartbox cal">' + svg + "</svg></div>" +
+        (repo ? '<p class="sub">' + (a.last_push ? "Newest image: " + esc(a.last_push) + (total ? "" : ". Nothing in the last 26 weeks.") : "No dated images in this repo.") + "</p>" : "");
+    }).catch(fail("activity"));
+  }
+
+  function agesChart() {
+    api("v1/charts/ages").then(function (ag) {
+      var box = $("ages");
+      if (!box) { return; }
+      var cats = V.concat(["unrated"]), color = function (c) { return COL[c] || OTHER; };
+      var tot = function (b) { return b.unrated + sum(b.verdicts); };
+      var max = Math.max.apply(null, ag.bins.map(tot)), sc = niceMax(max);
+      if (!max) { box.innerHTML = chartEmpty("No images indexed yet."); return; }
+      var W = 480, H = 240, L = 40, R = 4, T = 10, B = 24, bw = (W - L - R) / ag.bins.length;
+      var y = function (v) { return T + (H - T - B) * (1 - v / sc.top); };
+      var svg = svgOpen(W, H, "Images by age, split by staleness verdict");
+      for (var t = 0; t <= sc.top + 1e-9; t += sc.step) { svg += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + y(t) + '" y2="' + y(t) + '" class="' + (t ? "gl" : "bl") + '"/><text x="' + (L - 8) + '" y="' + (y(t) + 4) + '" class="ax" text-anchor="end">' + short(t) + "</text>"; }
+      ag.bins.forEach(function (b, i) {
+        var x0 = L + i * bw + 5, w = bw - 10, acc = 0, all = tot(b), drawn = cats.filter(function (c) { return c === "unrated" ? b.unrated : b.verdicts[c]; });
+        drawn.forEach(function (c, k) {
+          var n = c === "unrated" ? b.unrated : b.verdicts[c], y0 = y(acc), y1 = y(acc += n), h = Math.max(0, y0 - y1 - (k ? 2 : 0));
+          var tipH = "<b>" + esc(b.label) + " · " + (c === "unrated" ? "no verdict yet" : c) + "</b>" + fmt(n) + " of " + fmt(all) + " images (" + Math.round(100 * n / all) + "%)";
+          var attrs = ' class="hit" fill="' + color(c) + '" data-q="' + esc(b.filter) + '"' + (c !== "unrated" ? ' data-verdict="' + c + '"' : "") + tipAttr(tipH);
+          if (k === drawn.length - 1 && h > 4) {
+            svg += '<path d="M' + x0 + "," + (y0 - (k ? 2 : 0)) + "V" + (y1 + 3) + "a3,3 0 0 1 3,-3H" + (x0 + w - 3) + "a3,3 0 0 1 3,3V" + (y0 - (k ? 2 : 0)) + 'Z"' + attrs + "/>";
+          } else {
+            svg += '<rect x="' + x0 + '" y="' + y1 + '" width="' + w + '" height="' + h + '"' + attrs + "/>";
+          }
+        });
+        svg += '<text x="' + (x0 + w / 2) + '" y="' + (H - 6) + '" class="ax" text-anchor="middle">' + esc(b.label.replace(" months", "m").replace(" weeks", "w").replace(" years", "y").replace(" week", "w")) + "</text>";
+      });
+      $("agenote").textContent = (ag.source === "pushed" ? "days since push" : "days since build") + " · click a bar to search it";
+      box.innerHTML = legendHTML(V.map(function (v) { return [COL[v], v]; }).concat(ag.bins.some(function (b) { return b.unrated; }) ? [[OTHER, "no verdict yet"]] : [])) + '<div class="chartbox">' + svg + "</svg></div>";
+    }).catch(fail("ages"));
+  }
+
+  var HOW = [["layers", "matched by shared layers", "#5fd39a"], ["provenance", "found by build provenance", "#a99bff"], ["declared", "declared in a label or annotation", "#4fc3d9"],
+    ["named", "base named by provenance, not indexed", "#e8c84a"], ["unknown", "base unknown", "#a3a3ad"], ["roots", "no parent: bases and scratch images", "#3d3860"]];
+  function coverageChart() {
+    api("v1/charts/coverage").then(function (rows) {
+      var box = $("coverage");
+      if (!box) { return; }
+      if (!rows.length) { box.innerHTML = chartEmpty("No images indexed yet."); return; }
+      box.innerHTML = legendHTML(HOW.map(function (h) { return [h[2], h[1]]; })) + '<div class="cov">' + rows.map(function (r) {
+        var linked = r.layers + r.provenance + r.declared, need = r.images - r.roots;
+        return '<div class="covrow"><div class="covhead"><b class="mono">' + esc(r.registry) + '</b><span class="pct num">' + fmt(r.images) + " images · " + (need ? Math.round(100 * linked / need) + "% of those with a base linked to it" : "all roots") + '</span></div><div class="covbar">' +
+          HOW.map(function (h) { var n = r[h[0]]; return n ? '<i style="flex-grow:' + n + ";background:" + h[2] + '"' + tipAttr("<b>" + esc(r.registry) + "</b>" + esc(h[1]) + ": " + fmt(n) + " (" + (100 * n / r.images).toFixed(1) + "%)") + "></i>" : ""; }).join("") + "</div></div>";
+      }).join("") + "</div>" + '<p class="sub">Images whose base is named but not indexed list why on their image page. Add the base registry to strata.yaml so the next index can fetch it.</p>';
+    }).catch(fail("coverage"));
+  }
+
+  // ---------- layer map ----------
+  // layerMap draws an image's layers as a treemap: area is size, color is
+  // the ancestor whose build added the layer.
+  function layerMap(ex, chain) {
+    var layers = (ex.layers || []).filter(function (l) { return l.size > 0; });
+    if (layers.length < 2) { return ""; }
+    var names = {};
+    chain.forEach(function (nd) { names[nd.id] = nice(nd.label); });
+    var order = [], totals = {};
+    ex.layers.forEach(function (l) { var k = l.added_by || ""; if (order.indexOf(k) < 0) { order.push(k); } totals[k] = (totals[k] || 0) + (l.size || 0); });
+    var colorOf = function (k) { return SERIES[order.indexOf(k) % SERIES.length]; };
+    var nameOf = function (k) { return k ? (names[k] || nice(k)) : "this image"; };
+    var W = 1000, H = 300, items = layers.map(function (l) { return { l: l, a: l.size }; }).sort(function (a, b) { return b.a - a.a; });
+    var total = items.reduce(function (a, b) { return a + b.a; }, 0), scale = W * H / total;
+    items.forEach(function (it) { it.a *= scale; });
+    var rect = { x: 0, y: 0, w: W, h: H }, row = [], out = "";
+    function worst(r, side) { var s = 0, mx = 0, mn = Infinity; r.forEach(function (it) { s += it.a; mx = Math.max(mx, it.a); mn = Math.min(mn, it.a); }); return Math.max(side * side * mx / (s * s), s * s / (side * side * mn)); }
+    function place(it, x, y, w, h) {
+      var l = it.l, k = l.added_by || "";
+      var cmd = (l.created_by || "").replace(/^\/bin\/sh -c (#\(nop\) )?/, "").trim() || "layer " + l.position;
+      out += '<g class="tm"' + tipAttr("<b>" + esc(cmd.length > 140 ? cmd.slice(0, 139) + "…" : cmd) + "</b>" + bytes(l.size) + " · layer " + l.position + " · added by " + esc(nameOf(k)) + (l.shared_by > 1 ? " · in " + short(l.shared_by) + " images" : "")) + '><rect x="' + (x + 1).toFixed(1) + '" y="' + (y + 1).toFixed(1) + '" width="' + Math.max(0, w - 2).toFixed(1) + '" height="' + Math.max(0, h - 2).toFixed(1) + '" rx="4" fill="' + colorOf(k) + '" fill-opacity=".88"/>';
+      if (w > 90 && h > 36) {
+        var max = Math.floor((w - 18) / 6.8), t = cmd.length > max ? cmd.slice(0, max - 1) + "…" : cmd;
+        out += '<text x="' + (x + 9).toFixed(1) + '" y="' + (y + 19).toFixed(1) + '" class="tmt">' + esc(t) + '</text><text x="' + (x + 9).toFixed(1) + '" y="' + (y + 34).toFixed(1) + '" class="tms">' + bytes(l.size) + "</text>";
+      }
+      out += "</g>";
+    }
+    function lay(r) {
+      var s = r.reduce(function (a, it) { return a + it.a; }, 0);
+      if (rect.w >= rect.h) { var cw = s / rect.h, yy = rect.y; r.forEach(function (it) { var hh = it.a / cw; place(it, rect.x, yy, cw, hh); yy += hh; }); rect = { x: rect.x + cw, y: rect.y, w: rect.w - cw, h: rect.h }; }
+      else { var rh = s / rect.w, xx = rect.x; r.forEach(function (it) { var ww = it.a / rh; place(it, xx, rect.y, ww, rh); xx += ww; }); rect = { x: rect.x, y: rect.y + rh, w: rect.w, h: rect.h - rh }; }
+    }
+    while (items.length) {
+      var side = Math.min(rect.w, rect.h);
+      if (!row.length || worst(row.concat([items[0]]), side) <= worst(row, side)) { row.push(items.shift()); } else { lay(row); row = []; }
+    }
+    if (row.length) { lay(row); }
+    return '<div class="panel"><header><h2>Where the size comes from</h2><span class="pct">area is layer size · color is the build that added it</span></header><div class="body">' +
+      legendHTML(order.map(function (k) { return [colorOf(k), nameOf(k) + " · " + bytes(totals[k])]; })) +
+      '<div class="chartbox">' + svgOpen(W, H, "Layers of this image by size and the build that added them", "tmap") + out + "</svg></div></div></div>";
+  }
+
   function route() {
     var r = parseHash();
     VIEWS.forEach(function (x) { $("v-" + x).hidden = x !== r.view; });
@@ -533,7 +846,9 @@
     var el = $("v-" + r.view);
     if (r.view === "overview") { overview(el); }
     if (r.view === "lineage") { lineageView(el, r.params); }
+    if (r.view === "bases") { basesView(el, r.params); }
     if (r.view === "search") { searchView(el, r.params); }
+    if (r.view === "insights") { insightsView(el, r.params); }
     if (r.view === "cleanup") { cleanupView(el, r.params); }
     if (r.view === "image") { imageView(el, r.params); }
     if (r.view !== "search") { $("q").value = ""; }

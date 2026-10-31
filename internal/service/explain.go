@@ -59,6 +59,10 @@ type LayerInfo struct {
 	CreatedBy  string `json:"created_by"`
 	// SharedBy is how many indexed images contain this layer.
 	SharedBy int `json:"shared_by"`
+	// AddedBy is the ancestor whose build added this layer: an image
+	// digest, or a phantom id for a base that is not indexed. Empty means
+	// the image's own build added it.
+	AddedBy string `json:"added_by,omitempty"`
 }
 
 // StalenessInfo is an image's verdict and the signals behind it.
@@ -120,6 +124,9 @@ func (s *Service) Explain(ctx context.Context, ref, platform string, history boo
 		return nil, err
 	}
 	if ex.Layers, err = s.layers(ctx, digest); err != nil {
+		return nil, err
+	}
+	if err := s.layerOrigins(ctx, digest, ex.Layers); err != nil {
 		return nil, err
 	}
 	if history {
@@ -368,6 +375,53 @@ func (s *Service) layers(ctx context.Context, digest string) ([]LayerInfo, error
 		out = append(out, l)
 	}
 	return out, rows.Err()
+}
+
+// layerOrigins sets which ancestor added each layer: the nearest one
+// whose layers reach that far. An ancestor's layers are this image's
+// first n, where n is the depth at which its top chain ID appears among
+// this image's prefixes.
+func (s *Service) layerOrigins(ctx context.Context, digest string, layers []LayerInfo) error {
+	rows, err := s.db().QueryContext(ctx, `
+		WITH RECURSIVE up(id, d) AS (
+			SELECT parent, 1 FROM lineage WHERE digest = ? AND parent IS NOT NULL
+			UNION ALL
+			SELECT l.parent, up.d + 1 FROM up JOIN lineage l ON l.digest = up.id
+			WHERE l.parent IS NOT NULL AND up.d < 64
+		)
+		SELECT up.id, p.depth FROM up
+		LEFT JOIN images i ON i.digest = up.id
+		JOIN image_prefixes p ON p.digest = ? AND p.chain_id = coalesce(i.top_chain_id,
+			CASE WHEN starts_with(up.id, '`+model.PhantomPrefix+`') THEN substr(up.id, `+fmt.Sprint(len(model.PhantomPrefix)+1)+`) END)
+		ORDER BY p.depth`, digest, digest)
+	if err != nil {
+		return fmt.Errorf("read layer origins: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	type reach struct {
+		id    string
+		depth int
+	}
+	var ancestors []reach
+	for rows.Next() {
+		var r reach
+		if err := rows.Scan(&r.id, &r.depth); err != nil {
+			return err
+		}
+		ancestors = append(ancestors, r)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for i := range layers {
+		for _, a := range ancestors {
+			if layers[i].Position <= a.depth {
+				layers[i].AddedBy = a.id
+				break
+			}
+		}
+	}
+	return nil
 }
 
 // history returns the build steps from the image config.

@@ -251,3 +251,41 @@ table.layers { min-width: 0; }
 .kv dt { overflow-wrap: anywhere; }
 .chip[aria-pressed="true"] { border-color: var(--brand); color: var(--cream); background: var(--brand-wash); }
 .kpi a.chip { font-family: var(--sans); font-size: 13px; text-decoration: none; }
+
+/* charts */
+.chartbox { overflow-x: auto; }
+svg.chart { display: block; width: 100%; height: auto; overflow: visible; }
+svg.chart text { font-family: var(--sans); }
+svg.chart .ax { fill: var(--dim); font-size: 11px; font-variant-numeric: tabular-nums; }
+svg.chart .lb { fill: var(--mist); font-size: 12px; }
+svg.chart .gl { stroke: var(--line); stroke-width: 1; }
+svg.chart .bl { stroke: var(--line-2); stroke-width: 1; }
+svg.chart .col line { stroke: var(--cream); stroke-opacity: 0; }
+svg.chart .col:hover line { stroke-opacity: .35; }
+svg.chart .hit { cursor: pointer; }
+svg.chart .hit:hover { opacity: .82; }
+svg.chart.cal { max-width: none; }
+svg.chart.spark { width: 92px; flex: none; }
+svg.chart.tmap .tm:hover rect { fill-opacity: 1; }
+svg.chart .tmt { fill: #0e0d16; font-size: 12px; font-weight: 600; pointer-events: none; }
+svg.chart .tms { fill: #0e0d16; font-size: 11px; pointer-events: none; }
+.legend .sq { border-radius: 3px; }
+.kpi .trend { margin-top: 8px; }
+.rels { display: grid; gap: 2px; margin-top: 4px; }
+.rel { display: grid; grid-template-columns: minmax(120px, 220px) minmax(0, 1fr) minmax(110px, auto); gap: 14px; align-items: center; padding: 7px 8px; margin: 0 -8px; border: 0; border-radius: 8px; background: transparent; text-align: left; cursor: pointer; color: inherit; }
+.rel:hover { background: var(--ink-3); }
+.rel .rn { display: grid; min-width: 0; }
+.rel .rn b { color: var(--cream); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rel .rn span { color: var(--dim); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rel .track { height: 16px; border-radius: 4px; background: var(--ink-4); overflow: hidden; }
+.rel .track i { display: block; height: 100%; border-radius: 4px; }
+.rel .c { color: var(--mist); font-size: 12.5px; text-align: right; }
+.cov { display: grid; gap: 14px; margin-top: 4px; }
+.covhead { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
+.covhead b { color: var(--cream); font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+.covbar { display: flex; gap: 2px; height: 16px; }
+.covbar i { display: block; height: 100%; min-width: 3px; border-radius: 4px; }
+@media (max-width: 640px) {
+  .rel { grid-template-columns: minmax(0, 1fr) auto; }
+  .rel .track { grid-column: 1 / -1; grid-row: 2; }
+}
