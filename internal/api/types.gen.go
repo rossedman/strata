@@ -528,11 +528,14 @@ type IndexStatus struct {
 	// RefreshEverySeconds How often views refresh during a crawl; 0 means only at the end
 	RefreshEverySeconds int64 `json:"refresh_every_seconds"`
 
-	// RefreshedAt When lineage, staleness and the views were last recomputed
+	// RefreshedAt When lineage, staleness and the views were last recomputed; unset until the first refresh finishes
 	RefreshedAt *time.Time `json:"refreshed_at,omitempty"`
-	Registry    *string    `json:"registry,omitempty"`
-	Running     bool       `json:"running"`
-	StartedAt   *time.Time `json:"started_at,omitempty"`
+
+	// Refreshing A refresh is running now
+	Refreshing bool       `json:"refreshing"`
+	Registry   *string    `json:"registry,omitempty"`
+	Running    bool       `json:"running"`
+	StartedAt  *time.Time `json:"started_at,omitempty"`
 }
 
 // LayerInfo One layer and the build step that created it

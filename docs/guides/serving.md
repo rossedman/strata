@@ -8,7 +8,7 @@ strata serve                         # http://127.0.0.1:7878
 strata serve --reindex-every 6h      # also crawl the configured registries in the background
 ```
 
-With `--reindex-every`, the server crawls at startup and then on that schedule. The UI works throughout: a banner shows the crawl's progress, and lineage, staleness and the views refresh every `--refresh-every` (default 10 minutes) until the crawl finishes. See [Scaling to large registries](scaling.md#index-in-the-background) for running a first crawl of millions of images this way.
+With `--reindex-every`, the server crawls at startup and then on that schedule. The UI works throughout: a banner shows the crawl's progress, and lineage, staleness and the views are first computed a minute into the crawl, then every `--refresh-every` (default 10 minutes) until the crawl finishes. Without `--reindex-every`, a server started on an index that was never refreshed, such as after an interrupted `strata index`, computes lineage and staleness in the background at startup. See [Scaling to large registries](scaling.md#index-in-the-background) for running a first crawl of millions of images this way.
 
 | Path | What |
 | --- | --- |

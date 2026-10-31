@@ -1157,7 +1157,7 @@ components:
     IndexStatus:
       description: "State of the running or last index"
       type: object
-      required: [running, refresh_every_seconds, crawl]
+      required: [running, refreshing, refresh_every_seconds, crawl]
       properties:
         running: { type: boolean }
         registry: { type: string }
@@ -1166,7 +1166,10 @@ components:
         refreshed_at:
           type: string
           format: date-time
-          description: When lineage, staleness and the views were last recomputed
+          description: When lineage, staleness and the views were last recomputed; unset until the first refresh finishes
+        refreshing:
+          type: boolean
+          description: A refresh is running now
         refresh_every_seconds:
           type: integer
           format: int64

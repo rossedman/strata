@@ -528,9 +528,21 @@ func (s *Service) Overview(ctx context.Context) (*Overview, error) {
 		return nil, err
 	}
 	if len(ms) == 0 {
-		if ms, err = s.groupMetrics(ctx, ""); err != nil {
+		// No snapshot yet: the index has never been refreshed. Count from
+		// the stored tables, since the full metrics would join the
+		// unmaterialized view and take minutes on a large index; verdicts
+		// stay zero until staleness is computed.
+		m := GroupMetrics{Group: "all"}
+		err := s.db().QueryRowContext(ctx, `SELECT
+			(SELECT count(*) FROM images), (SELECT count(DISTINCT repo) FROM images),
+			(SELECT count(*) FROM tags WHERE digest IN (SELECT digest FROM images) OR digest IN (SELECT index_digest FROM index_manifests)),
+			(SELECT count(DISTINCT top_chain_id) FROM images),
+			(SELECT coalesce(sum(size), 0) FROM images), (SELECT coalesce(sum(size), 0) FROM layers)`).Scan(
+			&m.Manifests, &m.Repos, &m.Tags, &m.Stacks, &m.ApparentBytes, &m.DedupBytes)
+		if err != nil {
 			return nil, err
 		}
+		ms = []GroupMetrics{m}
 	}
 	o := &Overview{Roots: []RootStat{}, Changes: []Change{}}
 	if len(ms) > 0 {

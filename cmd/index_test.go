@@ -1,14 +1,18 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/rossedman/strata/internal/config"
 	"github.com/rossedman/strata/internal/ecr"
+	"github.com/rossedman/strata/internal/fixture"
+	"github.com/rossedman/strata/internal/store"
 	"github.com/rossedman/strata/internal/testreg"
 )
 
@@ -73,5 +77,42 @@ func TestIndexFilterFlagsOnConfiguredRegistries(t *testing.T) {
 	contains(t, out, "2 repos", "filtered out 2 repos")
 	if _, err := run(t, "index", "--config", cfg, "--pushed-since", "30d"); err == nil {
 		t.Fatal("pushed-since on a plain registry should fail")
+	}
+}
+
+func TestServeRefreshesUnbuiltIndex(t *testing.T) {
+	isolate(t)
+	db := filepath.Join(t.TempDir(), "unbuilt.duckdb")
+	st, err := store.Open(context.Background(), db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Write(context.Background(), fixture.Org(40)); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reset(rootCmd)
+	ctx, cancel := context.WithCancel(context.Background())
+	var out bytes.Buffer
+	rootCmd.SetOut(&out)
+	rootCmd.SetErr(&out)
+	rootCmd.SetArgs([]string{"serve", "--db", db, "--addr", "127.0.0.1:0"})
+	done := make(chan error, 1)
+	go func() { done <- rootCmd.ExecuteContext(ctx) }()
+	time.Sleep(3 * time.Second)
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("serve: %v\n%s", err, out.String())
+	}
+	contains(t, out.String(), "computing lineage and staleness for the existing index")
+	st, err = store.Open(context.Background(), db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = st.Close() }()
+	if v, err := st.Meta(context.Background(), "refreshed_at"); err != nil || v == "" {
+		t.Fatalf("serve did not refresh the index: %q, %v\n%s", v, err, out.String())
 	}
 }

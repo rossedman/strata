@@ -69,6 +69,11 @@ func New(st *store.Store) *Service {
 		_, err := st.DB().Exec(factsLiveView)
 		s.facts.Store(err == nil)
 	}
+	if v, err := st.Meta(context.Background(), "refreshed_at"); err == nil && v != "" {
+		if t, err := time.Parse(time.RFC3339Nano, v); err == nil {
+			s.st.RefreshedAt = &t
+		}
+	}
 	return s
 }
 
@@ -145,12 +150,31 @@ func (s *Service) Index(ctx context.Context, opts crawl.Options) (res IndexResul
 func (s *Service) Refresh(ctx context.Context) error {
 	s.refreshMu.Lock()
 	defer s.refreshMu.Unlock()
+	s.update(func(st *IndexStatus) { st.Refreshing = true })
+	defer s.update(func(st *IndexStatus) { st.Refreshing = false })
 	if err := s.refresh(ctx); err != nil {
 		return err
 	}
-	now := s.Now()
+	now := s.Now().UTC()
+	// Kept in the file, so a restarted server knows the views are built.
+	// The refresh is done, so cancelling now must not lose the record.
+	if err := s.Store.SetMeta(context.WithoutCancel(ctx), "refreshed_at", now.Format(time.RFC3339Nano)); err != nil {
+		return err
+	}
 	s.update(func(st *IndexStatus) { st.RefreshedAt = &now })
 	return nil
+}
+
+// NeedsRefresh reports whether the index holds images that lineage,
+// staleness and the views have never been computed for, as after an index
+// run that was stopped before its refresh.
+func (s *Service) NeedsRefresh(ctx context.Context) (bool, error) {
+	if s.facts.Load() {
+		return false, nil
+	}
+	var any bool
+	err := s.db().QueryRowContext(ctx, `SELECT count(*) > 0 FROM images`).Scan(&any)
+	return any, err
 }
 
 // Resolve maps a ref to one platform manifest digest. It accepts a

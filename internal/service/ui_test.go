@@ -228,3 +228,25 @@ func TestSearchPushedFacet(t *testing.T) {
 		t.Fatalf("explain dates = %+v", ex.Image)
 	}
 }
+
+// TestOverviewBeforeFirstRefresh checks the totals the Overview counts
+// from stored tables, before any snapshot exists, match the snapshot's.
+func TestOverviewBeforeFirstRefresh(t *testing.T) {
+	t.Parallel()
+	e := setup(t)
+	full, err := e.svc.Overview(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.db().Exec(`DELETE FROM snapshots`); err != nil {
+		t.Fatal(err)
+	}
+	quick, err := e.svc.Overview(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if quick.Images != full.Images || quick.Repos != full.Repos || quick.Tags != full.Tags || quick.Stacks != full.Stacks ||
+		quick.ApparentBytes != full.ApparentBytes || quick.DedupBytes != full.DedupBytes {
+		t.Fatalf("before a snapshot: %+v\nfrom the snapshot: %+v", quick, full)
+	}
+}
