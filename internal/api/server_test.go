@@ -274,6 +274,23 @@ func TestErrorsFromAClosedIndex(t *testing.T) {
 	if r, _ := c.GetSummaryWithResponse(ctx, nil); r.StatusCode() != http.StatusInternalServerError {
 		t.Fatalf("summary on closed index = %d", r.StatusCode())
 	}
+	charts := map[string]func() (int, error){
+		"kpis":     func() (int, error) { r, err := c.GetKPIHistoryWithResponse(ctx, nil); return r.StatusCode(), err },
+		"storage":  func() (int, error) { r, err := c.GetStorageHistoryWithResponse(ctx, nil); return r.StatusCode(), err },
+		"activity": func() (int, error) { r, err := c.GetActivityWithResponse(ctx, nil); return r.StatusCode(), err },
+		"ages":     func() (int, error) { r, err := c.GetAgesWithResponse(ctx); return r.StatusCode(), err },
+		"coverage": func() (int, error) { r, err := c.GetBaseCoverageWithResponse(ctx); return r.StatusCode(), err },
+		"adoption": func() (int, error) { r, err := c.GetAdoptionWithResponse(ctx, nil); return r.StatusCode(), err },
+		"rollout": func() (int, error) {
+			r, err := c.GetRolloutWithResponse(ctx, &client.GetRolloutParams{Base: "x"})
+			return r.StatusCode(), err
+		},
+	}
+	for name, call := range charts {
+		if code, err := call(); err != nil || code != http.StatusInternalServerError {
+			t.Fatalf("%s on closed index = %d, %v", name, code, err)
+		}
+	}
 }
 
 func TestHelpers(t *testing.T) {

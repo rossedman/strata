@@ -13,7 +13,7 @@ strata v0.1 implements the core of the design: indexing, lineage, staleness, the
 - Graph output as tree, JSON, Mermaid, DOT, SVG and self-contained HTML, under a node budget
 - `strata serve`: an OpenAPI-generated JSON API, MCP over HTTP, scheduled re-crawls, trusted-header auth, CLI routing
 - `strata mcp` over stdio
-- A web UI served by `strata serve` and `strata ui`: an overview, a lineage outline that loads one level at a time, search with facet counts, and an image page, backed by per-subtree counts and a materialized image table so it stays fast at millions of images
+- A web UI served by `strata serve` and `strata ui`: an overview with trend lines, a lineage outline that loads one level at a time, base adoption and rollout charts, storage, push activity, age and base coverage charts, search with facet counts, and an image page with a layer map, backed by per-subtree counts and a materialized image table so it stays fast at millions of images
 - Cleanup recommendations with reclaimable storage after shared layers, and generated ECR lifecycle policies checked against the index
 - Listing through the ECR, Harbor, Google Artifact Registry and Azure Container Registry APIs, with push times, and pull times on ECR and Harbor
 

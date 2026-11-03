@@ -535,8 +535,187 @@ paths:
           $ref: "#/components/responses/BadRequest"
         default:
           $ref: "#/components/responses/Error"
+  /v1/charts/kpis:
+    get:
+      operationId: getKPIHistory
+      summary: The Overview's headline numbers per day
+      description: Whole-index counts from the daily snapshots, oldest first. Snapshots start with the first refresh, so history cannot be backfilled.
+      tags: [ui]
+      parameters:
+        - $ref: "#/components/parameters/Days"
+      responses:
+        "200":
+          description: One entry per snapshot day
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/KPIDay"
+        default:
+          $ref: "#/components/responses/Error"
+  /v1/charts/storage:
+    get:
+      operationId: getStorageHistory
+      summary: Stored bytes over time by root base or repo
+      description: |
+        Each group's share of the deduplicated bytes per snapshot day: the
+        largest groups by their latest size, the rest folded into one
+        series. A layer several groups use is split between them, so the
+        series add up to the deduplicated total.
+      tags: [ui]
+      parameters:
+        - name: group_by
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [root, repo]
+            default: root
+        - name: top
+          in: query
+          required: false
+          description: Groups charted on their own
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 12
+            default: 6
+        - $ref: "#/components/parameters/Days"
+      responses:
+        "200":
+          description: The series
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Storage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        default:
+          $ref: "#/components/responses/Error"
+  /v1/charts/activity:
+    get:
+      operationId: getActivity
+      summary: Images pushed per day
+      description: |
+        Images per push day for the whole index or one repo, and the
+        busiest repos in the window. Where the registry reports no push
+        times, images are dated by their build time instead (`source` says
+        which).
+      tags: [ui]
+      parameters:
+        - name: repo
+          in: query
+          required: false
+          description: Only this repo, by its full name
+          schema:
+            type: string
+        - $ref: "#/components/parameters/Days"
+      responses:
+        "200":
+          description: Pushes per day
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Activity"
+        default:
+          $ref: "#/components/responses/Error"
+  /v1/charts/ages:
+    get:
+      operationId: getAges
+      summary: Images by age and verdict
+      description: Images bucketed by days since their push (or build), each bucket split by staleness verdict, with the query that selects it.
+      tags: [ui]
+      responses:
+        "200":
+          description: The buckets, youngest first
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Ages"
+        default:
+          $ref: "#/components/responses/Error"
+  /v1/charts/coverage:
+    get:
+      operationId: getBaseCoverage
+      summary: How images were linked to their bases, per registry
+      description: Per registry, images whose parent was found by shared layers, by build provenance or by a declared base; whose base is named but not indexed; whose base is unknown; and roots.
+      tags: [ui]
+      responses:
+        "200":
+          description: One row per registry, largest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Coverage"
+        default:
+          $ref: "#/components/responses/Error"
+  /v1/charts/adoption:
+    get:
+      operationId: getAdoption
+      summary: Which releases of a base images are built on
+      description: |
+        A base repo's releases, newest first, with how many images in other
+        repos are built directly on each. Without `base`, the repo most
+        built on. `bases` lists the repos most built on, for picking one.
+      tags: [ui]
+      parameters:
+        - name: base
+          in: query
+          required: false
+          description: The base repo, by its full name
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The releases
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Adoption"
+        default:
+          $ref: "#/components/responses/Error"
+  /v1/charts/rollout:
+    get:
+      operationId: getRollout
+      summary: How images moved between a base's releases over time
+      description: |
+        Per snapshot day, how many images in other repos were built
+        directly on each of a base's newest releases, with older and deleted
+        releases folded together.
+      tags: [ui]
+      parameters:
+        - name: base
+          in: query
+          required: true
+          description: The base repo, by its full name
+          schema:
+            type: string
+        - $ref: "#/components/parameters/Days"
+      responses:
+        "200":
+          description: The series
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Rollout"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        default:
+          $ref: "#/components/responses/Error"
 components:
   parameters:
+    Days:
+      name: days
+      in: query
+      required: false
+      description: How many days back the chart reaches
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 731
     Ref:
       name: ref
       in: query
@@ -969,6 +1148,9 @@ components:
           type: string
         shared_by:
           type: integer
+        added_by:
+          type: string
+          description: The ancestor whose build added this layer, an image digest or phantom id; unset when the image's own build did
     HistoryEntry:
       description: "One build step from the config history"
       type: object
@@ -1406,3 +1588,154 @@ components:
         metric: { type: string }
         from: { type: number }
         to: { type: number }
+    KPIDay:
+      description: "One day of whole-index numbers"
+      type: object
+      required: [day, images, repos, unique_stacks, dedup_bytes, stale, abandoned]
+      properties:
+        day: { type: string, format: date }
+        images: { type: integer, format: int64 }
+        repos: { type: integer, format: int64 }
+        unique_stacks: { type: integer, format: int64 }
+        dedup_bytes: { type: integer, format: int64 }
+        stale: { type: integer, format: int64 }
+        abandoned: { type: integer, format: int64 }
+    StorageSeries:
+      description: "One group's stored bytes per day"
+      type: object
+      required: [group, values]
+      properties:
+        group: { type: string }
+        label: { type: string, description: "Name of a root base that is not indexed" }
+        other: { type: boolean, description: "Folds every group outside the top" }
+        values:
+          type: array
+          items: { type: integer, format: int64 }
+    Storage:
+      description: "Stored bytes over time, split by root base or repo"
+      type: object
+      required: [group_by, days, series]
+      properties:
+        group_by: { type: string }
+        days:
+          type: array
+          items: { type: string, format: date }
+        series:
+          type: array
+          items: { $ref: "#/components/schemas/StorageSeries" }
+    DayCount:
+      type: object
+      required: [day, count]
+      properties:
+        day: { type: string, format: date }
+        count: { type: integer, format: int64 }
+    RepoCount:
+      type: object
+      required: [repo, count]
+      properties:
+        repo: { type: string }
+        count: { type: integer, format: int64 }
+    Activity:
+      description: "Images pushed per day"
+      type: object
+      required: [source, from, to, days, repos]
+      properties:
+        source: { type: string, enum: [pushed, created], description: "pushed when the registry reports push times, else created" }
+        repo: { type: string }
+        from: { type: string, format: date }
+        to: { type: string, format: date }
+        days:
+          type: array
+          items: { $ref: "#/components/schemas/DayCount" }
+        repos:
+          type: array
+          description: The busiest repos in the window
+          items: { $ref: "#/components/schemas/RepoCount" }
+        last_push: { type: string, format: date, description: "The repo's newest push, in the window or not" }
+    AgeBin:
+      type: object
+      required: [label, verdicts, unrated, filter]
+      properties:
+        label: { type: string }
+        verdicts: { $ref: "#/components/schemas/VerdictCounts" }
+        unrated: { type: integer, format: int64, description: "Images with no verdict yet" }
+        filter: { type: string, description: "The query that selects this bucket's images" }
+    Ages:
+      description: "Images by age and verdict"
+      type: object
+      required: [source, bins]
+      properties:
+        source: { type: string, enum: [pushed, created] }
+        bins:
+          type: array
+          items: { $ref: "#/components/schemas/AgeBin" }
+    Coverage:
+      description: "How one registry's images were linked to their bases"
+      type: object
+      required: [registry, images, layers, provenance, declared, named, unknown, roots]
+      properties:
+        registry: { type: string }
+        images: { type: integer, format: int64 }
+        layers: { type: integer, format: int64, description: "Parent found by shared layers" }
+        provenance: { type: integer, format: int64, description: "Parent found by build provenance" }
+        declared: { type: integer, format: int64, description: "Parent declared by an annotation or label" }
+        named: { type: integer, format: int64, description: "Base named by provenance but not indexed" }
+        unknown: { type: integer, format: int64, description: "Base neither indexed nor named" }
+        roots: { type: integer, format: int64, description: "No parent: bases, FROM scratch and single-layer images" }
+    BaseRepo:
+      type: object
+      required: [repo, images]
+      properties:
+        repo: { type: string }
+        images: { type: integer, format: int64, description: "Images in other repos built directly on it" }
+    Release:
+      description: "One build of a base: an index or a single-platform image"
+      type: object
+      required: [digest, tags, behind, images, repos, verdicts]
+      properties:
+        digest: { type: string }
+        tags:
+          type: array
+          items: { type: string }
+        built: { type: string, format: date }
+        behind: { type: integer, description: "Newer releases of the base" }
+        images: { type: integer, format: int64 }
+        repos: { type: integer, format: int64 }
+        verdicts: { $ref: "#/components/schemas/VerdictCounts" }
+    Adoption:
+      description: "Which releases of a base images are built on"
+      type: object
+      required: [base, bases, releases]
+      properties:
+        base: { type: string }
+        bases:
+          type: array
+          items: { $ref: "#/components/schemas/BaseRepo" }
+        releases:
+          type: array
+          items: { $ref: "#/components/schemas/Release" }
+    RolloutSeries:
+      type: object
+      required: [release, tags, counts]
+      properties:
+        release: { type: string }
+        tags:
+          type: array
+          items: { type: string }
+        built: { type: string, format: date }
+        older: { type: boolean, description: "Folds older and deleted releases" }
+        counts:
+          type: array
+          items: { type: integer, format: int64 }
+    Rollout:
+      description: "How images moved between a base's releases over time"
+      type: object
+      required: [base, days, series]
+      properties:
+        base: { type: string }
+        days:
+          type: array
+          items: { type: string, format: date }
+        series:
+          type: array
+          items: { $ref: "#/components/schemas/RolloutSeries" }

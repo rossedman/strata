@@ -14,7 +14,44 @@ import (
 	"time"
 
 	"github.com/oapi-codegen/runtime"
+	openapi_types "github.com/oapi-codegen/runtime/types"
 )
+
+// Defines values for ActivitySource.
+const (
+	ActivitySourceCreated ActivitySource = "created"
+	ActivitySourcePushed  ActivitySource = "pushed"
+)
+
+// Valid indicates whether the value is a known member of the ActivitySource enum.
+func (e ActivitySource) Valid() bool {
+	switch e {
+	case ActivitySourceCreated:
+		return true
+	case ActivitySourcePushed:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AgesSource.
+const (
+	AgesSourceCreated AgesSource = "created"
+	AgesSourcePushed  AgesSource = "pushed"
+)
+
+// Valid indicates whether the value is a known member of the AgesSource enum.
+func (e AgesSource) Valid() bool {
+	switch e {
+	case AgesSourceCreated:
+		return true
+	case AgesSourcePushed:
+		return true
+	default:
+		return false
+	}
+}
 
 // Defines values for BaseVersionConfidence.
 const (
@@ -316,6 +353,24 @@ func (e Verdict) Valid() bool {
 	}
 }
 
+// Defines values for GetStorageHistoryParamsGroupBy.
+const (
+	GetStorageHistoryParamsGroupByRepo GetStorageHistoryParamsGroupBy = "repo"
+	GetStorageHistoryParamsGroupByRoot GetStorageHistoryParamsGroupBy = "root"
+)
+
+// Valid indicates whether the value is a known member of the GetStorageHistoryParamsGroupBy enum.
+func (e GetStorageHistoryParamsGroupBy) Valid() bool {
+	switch e {
+	case GetStorageHistoryParamsGroupByRepo:
+		return true
+	case GetStorageHistoryParamsGroupByRoot:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for GetCleanupParamsScope.
 const (
 	GetCleanupParamsScopeRegistry GetCleanupParamsScope = "registry"
@@ -404,6 +459,62 @@ func (e SearchParamsPushed) Valid() bool {
 	default:
 		return false
 	}
+}
+
+// Activity Images pushed per day
+type Activity struct {
+	Days []DayCount         `json:"days"`
+	From openapi_types.Date `json:"from"`
+
+	// LastPush The repo's newest push, in the window or not
+	LastPush *openapi_types.Date `json:"last_push,omitempty"`
+	Repo     *string             `json:"repo,omitempty"`
+
+	// Repos The busiest repos in the window
+	Repos []RepoCount `json:"repos"`
+
+	// Source pushed when the registry reports push times, else created
+	Source ActivitySource     `json:"source"`
+	To     openapi_types.Date `json:"to"`
+}
+
+// ActivitySource pushed when the registry reports push times, else created
+type ActivitySource string
+
+// Adoption Which releases of a base images are built on
+type Adoption struct {
+	Base     string     `json:"base"`
+	Bases    []BaseRepo `json:"bases"`
+	Releases []Release  `json:"releases"`
+}
+
+// AgeBin defines model for AgeBin.
+type AgeBin struct {
+	// Filter The query that selects this bucket's images
+	Filter string `json:"filter"`
+	Label  string `json:"label"`
+
+	// Unrated Images with no verdict yet
+	Unrated int64 `json:"unrated"`
+
+	// Verdicts Images per verdict
+	Verdicts VerdictCounts `json:"verdicts"`
+}
+
+// Ages Images by age and verdict
+type Ages struct {
+	Bins   []AgeBin   `json:"bins"`
+	Source AgesSource `json:"source"`
+}
+
+// AgesSource defines model for Ages.Source.
+type AgesSource string
+
+// BaseRepo defines model for BaseRepo.
+type BaseRepo struct {
+	// Images Images in other repos built directly on it
+	Images int64  `json:"images"`
+	Repo   string `json:"repo"`
 }
 
 // BaseVersion One digest a base tag has held, and how much is built on it
@@ -517,6 +628,29 @@ type ConfigInfo struct {
 	Workdir     string             `json:"workdir"`
 }
 
+// Coverage How one registry's images were linked to their bases
+type Coverage struct {
+	// Declared Parent declared by an annotation or label
+	Declared int64 `json:"declared"`
+	Images   int64 `json:"images"`
+
+	// Layers Parent found by shared layers
+	Layers int64 `json:"layers"`
+
+	// Named Base named by provenance but not indexed
+	Named int64 `json:"named"`
+
+	// Provenance Parent found by build provenance
+	Provenance int64  `json:"provenance"`
+	Registry   string `json:"registry"`
+
+	// Roots No parent: bases, FROM scratch and single-layer images
+	Roots int64 `json:"roots"`
+
+	// Unknown Base neither indexed nor named
+	Unknown int64 `json:"unknown"`
+}
+
 // CrawlStats Running totals of a crawl
 type CrawlStats struct {
 	// BasesFetched Bases fetched by digest because provenance named them
@@ -544,6 +678,12 @@ type CrawlStats struct {
 	TagMoves     int64 `json:"tag_moves"`
 	Tags         int64 `json:"tags"`
 	TagsFiltered int64 `json:"tags_filtered"`
+}
+
+// DayCount defines model for DayCount.
+type DayCount struct {
+	Count int64              `json:"count"`
+	Day   openapi_types.Date `json:"day"`
 }
 
 // DescendantResult A descendant graph and the base versions it starts from
@@ -708,14 +848,27 @@ type IndexStatus struct {
 	StartedAt  *time.Time `json:"started_at,omitempty"`
 }
 
+// KPIDay One day of whole-index numbers
+type KPIDay struct {
+	Abandoned    int64              `json:"abandoned"`
+	Day          openapi_types.Date `json:"day"`
+	DedupBytes   int64              `json:"dedup_bytes"`
+	Images       int64              `json:"images"`
+	Repos        int64              `json:"repos"`
+	Stale        int64              `json:"stale"`
+	UniqueStacks int64              `json:"unique_stacks"`
+}
+
 // LayerInfo One layer and the build step that created it
 type LayerInfo struct {
-	BlobDigest string `json:"blob_digest"`
-	CreatedBy  string `json:"created_by"`
-	DiffId     string `json:"diff_id"`
-	Position   int    `json:"position"`
-	SharedBy   int    `json:"shared_by"`
-	Size       int64  `json:"size"`
+	// AddedBy The ancestor whose build added this layer, an image digest or phantom id; unset when the image's own build did
+	AddedBy    *string `json:"added_by,omitempty"`
+	BlobDigest string  `json:"blob_digest"`
+	CreatedBy  string  `json:"created_by"`
+	DiffId     string  `json:"diff_id"`
+	Position   int     `json:"position"`
+	SharedBy   int     `json:"shared_by"`
+	Size       int64   `json:"size"`
 }
 
 // Lifecycle A generated ECR lifecycle policy for one repo, checked against the index
@@ -902,10 +1055,48 @@ type RefreshStats struct {
 	VerdictsChanged int `json:"verdicts_changed"`
 }
 
+// Release One build of a base: an index or a single-platform image
+type Release struct {
+	// Behind Newer releases of the base
+	Behind int                 `json:"behind"`
+	Built  *openapi_types.Date `json:"built,omitempty"`
+	Digest string              `json:"digest"`
+	Images int64               `json:"images"`
+	Repos  int64               `json:"repos"`
+	Tags   []string            `json:"tags"`
+
+	// Verdicts Images per verdict
+	Verdicts VerdictCounts `json:"verdicts"`
+}
+
+// RepoCount defines model for RepoCount.
+type RepoCount struct {
+	Count int64  `json:"count"`
+	Repo  string `json:"repo"`
+}
+
 // Resolved A ref and the platform manifest digest it names
 type Resolved struct {
 	Digest string `json:"digest"`
 	Ref    string `json:"ref"`
+}
+
+// Rollout How images moved between a base's releases over time
+type Rollout struct {
+	Base   string               `json:"base"`
+	Days   []openapi_types.Date `json:"days"`
+	Series []RolloutSeries      `json:"series"`
+}
+
+// RolloutSeries defines model for RolloutSeries.
+type RolloutSeries struct {
+	Built  *openapi_types.Date `json:"built,omitempty"`
+	Counts []int64             `json:"counts"`
+
+	// Older Folds older and deleted releases
+	Older   *bool    `json:"older,omitempty"`
+	Release string   `json:"release"`
+	Tags    []string `json:"tags"`
 }
 
 // Root A root base and how much descends from it
@@ -969,6 +1160,25 @@ type StalenessInfo struct {
 	Verdict Verdict `json:"verdict"`
 }
 
+// Storage Stored bytes over time, split by root base or repo
+type Storage struct {
+	Days    []openapi_types.Date `json:"days"`
+	GroupBy string               `json:"group_by"`
+	Series  []StorageSeries      `json:"series"`
+}
+
+// StorageSeries One group's stored bytes per day
+type StorageSeries struct {
+	Group string `json:"group"`
+
+	// Label Name of a root base that is not indexed
+	Label *string `json:"label,omitempty"`
+
+	// Other Folds every group outside the top
+	Other  *bool   `json:"other,omitempty"`
+	Values []int64 `json:"values"`
+}
+
 // Summary Footprint summary of the registry, optionally grouped
 type Summary struct {
 	GroupBy               *string             `json:"group_by,omitempty"`
@@ -999,6 +1209,9 @@ type VerdictCounts struct {
 
 // Budget defines model for Budget.
 type Budget = int
+
+// Days defines model for Days.
+type Days = int
 
 // Filter defines model for Filter.
 type Filter = string
@@ -1032,6 +1245,50 @@ type GetAncestryParams struct {
 	// Platform Platform to pick when the ref names a multi-platform index, such as linux/arm64
 	Platform *Platform `form:"platform,omitempty" json:"platform,omitempty"`
 }
+
+// GetActivityParams defines parameters for GetActivity.
+type GetActivityParams struct {
+	// Repo Only this repo, by its full name
+	Repo *string `form:"repo,omitempty" json:"repo,omitempty"`
+
+	// Days How many days back the chart reaches
+	Days *Days `form:"days,omitempty" json:"days,omitempty"`
+}
+
+// GetAdoptionParams defines parameters for GetAdoption.
+type GetAdoptionParams struct {
+	// Base The base repo, by its full name
+	Base *string `form:"base,omitempty" json:"base,omitempty"`
+}
+
+// GetKPIHistoryParams defines parameters for GetKPIHistory.
+type GetKPIHistoryParams struct {
+	// Days How many days back the chart reaches
+	Days *Days `form:"days,omitempty" json:"days,omitempty"`
+}
+
+// GetRolloutParams defines parameters for GetRollout.
+type GetRolloutParams struct {
+	// Base The base repo, by its full name
+	Base string `form:"base" json:"base"`
+
+	// Days How many days back the chart reaches
+	Days *Days `form:"days,omitempty" json:"days,omitempty"`
+}
+
+// GetStorageHistoryParams defines parameters for GetStorageHistory.
+type GetStorageHistoryParams struct {
+	GroupBy *GetStorageHistoryParamsGroupBy `form:"group_by,omitempty" json:"group_by,omitempty"`
+
+	// Top Groups charted on their own
+	Top *int `form:"top,omitempty" json:"top,omitempty"`
+
+	// Days How many days back the chart reaches
+	Days *Days `form:"days,omitempty" json:"days,omitempty"`
+}
+
+// GetStorageHistoryParamsGroupBy defines parameters for GetStorageHistory.
+type GetStorageHistoryParamsGroupBy string
 
 // GetCleanupParams defines parameters for GetCleanup.
 type GetCleanupParams struct {
@@ -1274,6 +1531,65 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/ancestry (the `GetAncestry` operationId).
 	GetAncestry(ctx context.Context, params *GetAncestryParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetActivity Images pushed per day
+	//
+	// Images per push day for the whole index or one repo, and the
+	// busiest repos in the window. Where the registry reports no push
+	// times, images are dated by their build time instead (`source` says
+	// which).
+	//
+	// Corresponds with GET /v1/charts/activity (the `GetActivity` operationId).
+	GetActivity(ctx context.Context, params *GetActivityParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetAdoption Which releases of a base images are built on
+	//
+	// A base repo's releases, newest first, with how many images in other
+	// repos are built directly on each. Without `base`, the repo most
+	// built on. `bases` lists the repos most built on, for picking one.
+	//
+	// Corresponds with GET /v1/charts/adoption (the `GetAdoption` operationId).
+	GetAdoption(ctx context.Context, params *GetAdoptionParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetAges Images by age and verdict
+	//
+	// Images bucketed by days since their push (or build), each bucket split by staleness verdict, with the query that selects it.
+	//
+	// Corresponds with GET /v1/charts/ages (the `GetAges` operationId).
+	GetAges(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetBaseCoverage How images were linked to their bases, per registry
+	//
+	// Per registry, images whose parent was found by shared layers, by build provenance or by a declared base; whose base is named but not indexed; whose base is unknown; and roots.
+	//
+	// Corresponds with GET /v1/charts/coverage (the `GetBaseCoverage` operationId).
+	GetBaseCoverage(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetKPIHistory The Overview's headline numbers per day
+	//
+	// Whole-index counts from the daily snapshots, oldest first. Snapshots start with the first refresh, so history cannot be backfilled.
+	//
+	// Corresponds with GET /v1/charts/kpis (the `GetKPIHistory` operationId).
+	GetKPIHistory(ctx context.Context, params *GetKPIHistoryParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetRollout How images moved between a base's releases over time
+	//
+	// Per snapshot day, how many images in other repos were built
+	// directly on each of a base's newest releases, with older and deleted
+	// releases folded together.
+	//
+	// Corresponds with GET /v1/charts/rollout (the `GetRollout` operationId).
+	GetRollout(ctx context.Context, params *GetRolloutParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetStorageHistory Stored bytes over time by root base or repo
+	//
+	// Each group's share of the deduplicated bytes per snapshot day: the
+	// largest groups by their latest size, the rest folded into one
+	// series. A layer several groups use is split between them, so the
+	// series add up to the deduplicated total.
+	//
+	// Corresponds with GET /v1/charts/storage (the `GetStorageHistory` operationId).
+	GetStorageHistory(ctx context.Context, params *GetStorageHistoryParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetCleanup Images safe to delete and the storage deleting them frees
 	//
 	// Deletion candidates: images matching `where` (abandoned ones by
@@ -1389,6 +1705,135 @@ type ClientInterface interface {
 // Corresponds with GET /v1/ancestry (the `GetAncestry` operationId).
 func (c *Client) GetAncestry(ctx context.Context, params *GetAncestryParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetAncestryRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetActivity Images pushed per day
+//
+// Images per push day for the whole index or one repo, and the
+// busiest repos in the window. Where the registry reports no push
+// times, images are dated by their build time instead (`source` says
+// which).
+//
+// Corresponds with GET /v1/charts/activity (the `GetActivity` operationId).
+func (c *Client) GetActivity(ctx context.Context, params *GetActivityParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetActivityRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetAdoption Which releases of a base images are built on
+//
+// A base repo's releases, newest first, with how many images in other
+// repos are built directly on each. Without `base`, the repo most
+// built on. `bases` lists the repos most built on, for picking one.
+//
+// Corresponds with GET /v1/charts/adoption (the `GetAdoption` operationId).
+func (c *Client) GetAdoption(ctx context.Context, params *GetAdoptionParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetAdoptionRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetAges Images by age and verdict
+//
+// Images bucketed by days since their push (or build), each bucket split by staleness verdict, with the query that selects it.
+//
+// Corresponds with GET /v1/charts/ages (the `GetAges` operationId).
+func (c *Client) GetAges(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetAgesRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetBaseCoverage How images were linked to their bases, per registry
+//
+// Per registry, images whose parent was found by shared layers, by build provenance or by a declared base; whose base is named but not indexed; whose base is unknown; and roots.
+//
+// Corresponds with GET /v1/charts/coverage (the `GetBaseCoverage` operationId).
+func (c *Client) GetBaseCoverage(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetBaseCoverageRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetKPIHistory The Overview's headline numbers per day
+//
+// Whole-index counts from the daily snapshots, oldest first. Snapshots start with the first refresh, so history cannot be backfilled.
+//
+// Corresponds with GET /v1/charts/kpis (the `GetKPIHistory` operationId).
+func (c *Client) GetKPIHistory(ctx context.Context, params *GetKPIHistoryParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetKPIHistoryRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetRollout How images moved between a base's releases over time
+//
+// Per snapshot day, how many images in other repos were built
+// directly on each of a base's newest releases, with older and deleted
+// releases folded together.
+//
+// Corresponds with GET /v1/charts/rollout (the `GetRollout` operationId).
+func (c *Client) GetRollout(ctx context.Context, params *GetRolloutParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetRolloutRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetStorageHistory Stored bytes over time by root base or repo
+//
+// Each group's share of the deduplicated bytes per snapshot day: the
+// largest groups by their latest size, the rest folded into one
+// series. A layer several groups use is split between them, so the
+// series add up to the deduplicated total.
+//
+// Corresponds with GET /v1/charts/storage (the `GetStorageHistory` operationId).
+func (c *Client) GetStorageHistory(ctx context.Context, params *GetStorageHistoryParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetStorageHistoryRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -1707,6 +2152,374 @@ func NewGetAncestryRequest(server string, params *GetAncestryParams) (*http.Requ
 		if params.Platform != nil {
 
 			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "platform", *params.Platform, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetActivityRequest constructs an http.Request for the GetActivity method
+func NewGetActivityRequest(server string, params *GetActivityParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/charts/activity")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Repo != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "repo", *params.Repo, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Days != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "days", *params.Days, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetAdoptionRequest constructs an http.Request for the GetAdoption method
+func NewGetAdoptionRequest(server string, params *GetAdoptionParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/charts/adoption")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Base != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "base", *params.Base, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetAgesRequest constructs an http.Request for the GetAges method
+func NewGetAgesRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/charts/ages")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetBaseCoverageRequest constructs an http.Request for the GetBaseCoverage method
+func NewGetBaseCoverageRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/charts/coverage")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetKPIHistoryRequest constructs an http.Request for the GetKPIHistory method
+func NewGetKPIHistoryRequest(server string, params *GetKPIHistoryParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/charts/kpis")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Days != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "days", *params.Days, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetRolloutRequest constructs an http.Request for the GetRollout method
+func NewGetRolloutRequest(server string, params *GetRolloutParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/charts/rollout")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "base", params.Base, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if params.Days != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "days", *params.Days, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetStorageHistoryRequest constructs an http.Request for the GetStorageHistory method
+func NewGetStorageHistoryRequest(server string, params *GetStorageHistoryParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/charts/storage")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.GroupBy != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "group_by", *params.GroupBy, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Top != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "top", *params.Top, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Days != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "days", *params.Days, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -2848,6 +3661,79 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/ancestry (the `GetAncestry` operationId).
 	GetAncestryWithResponse(ctx context.Context, params *GetAncestryParams, reqEditors ...RequestEditorFn) (*GetAncestryResponse, error)
 
+	// GetActivityWithResponse Images pushed per day
+	//
+	// Images per push day for the whole index or one repo, and the
+	// busiest repos in the window. Where the registry reports no push
+	// times, images are dated by their build time instead (`source` says
+	// which).
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/charts/activity (the `GetActivity` operationId).
+	GetActivityWithResponse(ctx context.Context, params *GetActivityParams, reqEditors ...RequestEditorFn) (*GetActivityResponse, error)
+
+	// GetAdoptionWithResponse Which releases of a base images are built on
+	//
+	// A base repo's releases, newest first, with how many images in other
+	// repos are built directly on each. Without `base`, the repo most
+	// built on. `bases` lists the repos most built on, for picking one.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/charts/adoption (the `GetAdoption` operationId).
+	GetAdoptionWithResponse(ctx context.Context, params *GetAdoptionParams, reqEditors ...RequestEditorFn) (*GetAdoptionResponse, error)
+
+	// GetAgesWithResponse Images by age and verdict
+	//
+	// Images bucketed by days since their push (or build), each bucket split by staleness verdict, with the query that selects it.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/charts/ages (the `GetAges` operationId).
+	GetAgesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetAgesResponse, error)
+
+	// GetBaseCoverageWithResponse How images were linked to their bases, per registry
+	//
+	// Per registry, images whose parent was found by shared layers, by build provenance or by a declared base; whose base is named but not indexed; whose base is unknown; and roots.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/charts/coverage (the `GetBaseCoverage` operationId).
+	GetBaseCoverageWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetBaseCoverageResponse, error)
+
+	// GetKPIHistoryWithResponse The Overview's headline numbers per day
+	//
+	// Whole-index counts from the daily snapshots, oldest first. Snapshots start with the first refresh, so history cannot be backfilled.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/charts/kpis (the `GetKPIHistory` operationId).
+	GetKPIHistoryWithResponse(ctx context.Context, params *GetKPIHistoryParams, reqEditors ...RequestEditorFn) (*GetKPIHistoryResponse, error)
+
+	// GetRolloutWithResponse How images moved between a base's releases over time
+	//
+	// Per snapshot day, how many images in other repos were built
+	// directly on each of a base's newest releases, with older and deleted
+	// releases folded together.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/charts/rollout (the `GetRollout` operationId).
+	GetRolloutWithResponse(ctx context.Context, params *GetRolloutParams, reqEditors ...RequestEditorFn) (*GetRolloutResponse, error)
+
+	// GetStorageHistoryWithResponse Stored bytes over time by root base or repo
+	//
+	// Each group's share of the deduplicated bytes per snapshot day: the
+	// largest groups by their latest size, the rest folded into one
+	// series. A layer several groups use is split between them, so the
+	// series add up to the deduplicated total.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/charts/storage (the `GetStorageHistory` operationId).
+	GetStorageHistoryWithResponse(ctx context.Context, params *GetStorageHistoryParams, reqEditors ...RequestEditorFn) (*GetStorageHistoryResponse, error)
+
 	// GetCleanupWithResponse Images safe to delete and the storage deleting them frees
 	//
 	// Deletion candidates: images matching `where` (abandoned ones by
@@ -3039,6 +3925,356 @@ func (r GetAncestryResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetAncestryResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetActivityResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Activity
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetActivityResponse) GetJSON200() *Activity {
+	return r.JSON200
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r GetActivityResponse) GetJSONDefault() *Error {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetActivityResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetActivityResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetActivityResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetActivityResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetAdoptionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Adoption
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetAdoptionResponse) GetJSON200() *Adoption {
+	return r.JSON200
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r GetAdoptionResponse) GetJSONDefault() *Error {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetAdoptionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetAdoptionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetAdoptionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetAdoptionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetAgesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Ages
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetAgesResponse) GetJSON200() *Ages {
+	return r.JSON200
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r GetAgesResponse) GetJSONDefault() *Error {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetAgesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetAgesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetAgesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetAgesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetBaseCoverageResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *[]Coverage
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetBaseCoverageResponse) GetJSON200() *[]Coverage {
+	return r.JSON200
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r GetBaseCoverageResponse) GetJSONDefault() *Error {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetBaseCoverageResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetBaseCoverageResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetBaseCoverageResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetBaseCoverageResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetKPIHistoryResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *[]KPIDay
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetKPIHistoryResponse) GetJSON200() *[]KPIDay {
+	return r.JSON200
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r GetKPIHistoryResponse) GetJSONDefault() *Error {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetKPIHistoryResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetKPIHistoryResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetKPIHistoryResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetKPIHistoryResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetRolloutResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Rollout
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetRolloutResponse) GetJSON200() *Rollout {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetRolloutResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r GetRolloutResponse) GetJSONDefault() *Error {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetRolloutResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetRolloutResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetRolloutResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetRolloutResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetStorageHistoryResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Storage
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetStorageHistoryResponse) GetJSON200() *Storage {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetStorageHistoryResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r GetStorageHistoryResponse) GetJSONDefault() *Error {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetStorageHistoryResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetStorageHistoryResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetStorageHistoryResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetStorageHistoryResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -3903,6 +5139,121 @@ func (c *ClientWithResponses) GetAncestryWithResponse(ctx context.Context, param
 	return ParseGetAncestryResponse(rsp)
 }
 
+// GetActivityWithResponse Images pushed per day
+//
+// Images per push day for the whole index or one repo, and the
+// busiest repos in the window. Where the registry reports no push
+// times, images are dated by their build time instead (`source` says
+// which).
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/charts/activity (the `GetActivity` operationId).
+func (c *ClientWithResponses) GetActivityWithResponse(ctx context.Context, params *GetActivityParams, reqEditors ...RequestEditorFn) (*GetActivityResponse, error) {
+	rsp, err := c.GetActivity(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetActivityResponse(rsp)
+}
+
+// GetAdoptionWithResponse Which releases of a base images are built on
+//
+// A base repo's releases, newest first, with how many images in other
+// repos are built directly on each. Without `base`, the repo most
+// built on. `bases` lists the repos most built on, for picking one.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/charts/adoption (the `GetAdoption` operationId).
+func (c *ClientWithResponses) GetAdoptionWithResponse(ctx context.Context, params *GetAdoptionParams, reqEditors ...RequestEditorFn) (*GetAdoptionResponse, error) {
+	rsp, err := c.GetAdoption(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetAdoptionResponse(rsp)
+}
+
+// GetAgesWithResponse Images by age and verdict
+//
+// Images bucketed by days since their push (or build), each bucket split by staleness verdict, with the query that selects it.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/charts/ages (the `GetAges` operationId).
+func (c *ClientWithResponses) GetAgesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetAgesResponse, error) {
+	rsp, err := c.GetAges(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetAgesResponse(rsp)
+}
+
+// GetBaseCoverageWithResponse How images were linked to their bases, per registry
+//
+// Per registry, images whose parent was found by shared layers, by build provenance or by a declared base; whose base is named but not indexed; whose base is unknown; and roots.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/charts/coverage (the `GetBaseCoverage` operationId).
+func (c *ClientWithResponses) GetBaseCoverageWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetBaseCoverageResponse, error) {
+	rsp, err := c.GetBaseCoverage(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetBaseCoverageResponse(rsp)
+}
+
+// GetKPIHistoryWithResponse The Overview's headline numbers per day
+//
+// Whole-index counts from the daily snapshots, oldest first. Snapshots start with the first refresh, so history cannot be backfilled.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/charts/kpis (the `GetKPIHistory` operationId).
+func (c *ClientWithResponses) GetKPIHistoryWithResponse(ctx context.Context, params *GetKPIHistoryParams, reqEditors ...RequestEditorFn) (*GetKPIHistoryResponse, error) {
+	rsp, err := c.GetKPIHistory(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetKPIHistoryResponse(rsp)
+}
+
+// GetRolloutWithResponse How images moved between a base's releases over time
+//
+// Per snapshot day, how many images in other repos were built
+// directly on each of a base's newest releases, with older and deleted
+// releases folded together.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/charts/rollout (the `GetRollout` operationId).
+func (c *ClientWithResponses) GetRolloutWithResponse(ctx context.Context, params *GetRolloutParams, reqEditors ...RequestEditorFn) (*GetRolloutResponse, error) {
+	rsp, err := c.GetRollout(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetRolloutResponse(rsp)
+}
+
+// GetStorageHistoryWithResponse Stored bytes over time by root base or repo
+//
+// Each group's share of the deduplicated bytes per snapshot day: the
+// largest groups by their latest size, the rest folded into one
+// series. A layer several groups use is split between them, so the
+// series add up to the deduplicated total.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/charts/storage (the `GetStorageHistory` operationId).
+func (c *ClientWithResponses) GetStorageHistoryWithResponse(ctx context.Context, params *GetStorageHistoryParams, reqEditors ...RequestEditorFn) (*GetStorageHistoryResponse, error) {
+	rsp, err := c.GetStorageHistory(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetStorageHistoryResponse(rsp)
+}
+
 // GetCleanupWithResponse Images safe to delete and the storage deleting them frees
 //
 // Deletion candidates: images matching `where` (abandoned ones by
@@ -4167,6 +5518,251 @@ func ParseGetAncestryResponse(rsp *http.Response) (*GetAncestryResponse, error) 
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetActivityResponse parses an HTTP response from a GetActivityWithResponse call
+func ParseGetActivityResponse(rsp *http.Response) (*GetActivityResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetActivityResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Activity
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetAdoptionResponse parses an HTTP response from a GetAdoptionWithResponse call
+func ParseGetAdoptionResponse(rsp *http.Response) (*GetAdoptionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetAdoptionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Adoption
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetAgesResponse parses an HTTP response from a GetAgesWithResponse call
+func ParseGetAgesResponse(rsp *http.Response) (*GetAgesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetAgesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Ages
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetBaseCoverageResponse parses an HTTP response from a GetBaseCoverageWithResponse call
+func ParseGetBaseCoverageResponse(rsp *http.Response) (*GetBaseCoverageResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetBaseCoverageResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []Coverage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetKPIHistoryResponse parses an HTTP response from a GetKPIHistoryWithResponse call
+func ParseGetKPIHistoryResponse(rsp *http.Response) (*GetKPIHistoryResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetKPIHistoryResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []KPIDay
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetRolloutResponse parses an HTTP response from a GetRolloutWithResponse call
+func ParseGetRolloutResponse(rsp *http.Response) (*GetRolloutResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetRolloutResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Rollout
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetStorageHistoryResponse parses an HTTP response from a GetStorageHistoryWithResponse call
+func ParseGetStorageHistoryResponse(rsp *http.Response) (*GetStorageHistoryResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetStorageHistoryResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Storage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Error

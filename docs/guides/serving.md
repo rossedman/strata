@@ -29,10 +29,14 @@ Links work with a ref as well as a digest: `#image?d=reg.example.com/payments/ap
 
 | View | Shows |
 | --- | --- |
-| Overview | image, repo and storage totals, the staleness mix, the root bases holding the most stale images, the week's changes, and a registry map |
+| Overview | image, repo and storage totals with 30-day trend lines, the staleness mix, the root bases holding the most stale images, the week's changes, and a registry map |
 | Lineage | an outline of root bases, bases and repos with image counts and verdict bars. Each level loads when you expand it, and a repo pages through its images 50 at a time, so it stays fast at millions of images |
+| Bases | for each base other repos build on, its releases newest first with how many images and repos use each, and a rollout chart of how that share moved day by day. Click a release to search the images on it |
 | Search | the query language in the top bar, facets for verdict, team, root base, platform and age whose counts update together, and paged results |
-| Image | the verdict and its reasons, the ancestry chain, layers with the build step behind each, labels, config and findings |
+| Insights | storage over time split by root base or repo, images pushed per day for the registry or one repo, image age by verdict (click a bar to search it), and per registry how images were linked to their bases: by layers, provenance or a declared base, or not at all |
+| Image | the verdict and its reasons, the ancestry chain, a layer map sized by bytes and colored by the build that added each layer, layers with the build step behind each, labels, config and findings |
+
+Trend lines, storage over time and the rollout chart read the daily snapshots strata takes at each refresh. Snapshots cannot be backfilled, so these charts fill in from the day you start refreshing; the others answer from the index straight away. Push activity and image age use push times where the registry reports them (ECR, Harbor, Google Artifact Registry, Azure Container Registry), and build times from the image config elsewhere.
 
 The UI is read-only. It loads nothing from outside the server: fonts and scripts are embedded, and the page's content security policy allows only its own origin.
 
